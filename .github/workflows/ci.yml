@@ -1,0 +1,53 @@
+# Runs on every push and pull request: format, vet, test, build,
+# and check that the generated flake evaluates for every Odoo version.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: license headers
+        # every .go and .py file starts with the Mechas Heart / Apache-2.0 header
+        run: |
+          missing=$(find . -path ./.git -prune -o \( -name '*.go' -o -name '*.py' \) -print | xargs grep -L 'SPDX-License-Identifier: Apache-2.0' || true)
+          if [ -n "$missing" ]; then echo "missing license header:"; echo "$missing"; exit 1; fi
+      - run: go vet ./...
+      - run: go test ./...
+      - run: make build
+
+  # Renders nix/flake.nix for each supported Odoo version, builds its python
+  # (all from cache.nixos.org) and checks it against that branch's
+  # requirements.txt. Catches template bugs and packages nixpkgs lacks.
+  flake:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        odoo: ["15.0", "16.0", "17.0", "18.0", "19.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: cachix/install-nix-action@v31
+      - run: make build
+      - name: evaluate flake for Odoo ${{ matrix.odoo }}
+        run: |
+          export XDG_STATE_HOME="$RUNNER_TEMP/state"
+          ./bin/godoo -C "$RUNNER_TEMP" init demo --version "${{ matrix.odoo }}"
+          cd "$RUNNER_TEMP/demo"
+          nix eval --raw path:./nix#packages.x86_64-linux.default.drvPath
+          nix build path:./nix#python --out-link python
+          curl -fsSL "https://raw.githubusercontent.com/odoo/odoo/${{ matrix.odoo }}/requirements.txt" -o requirements.txt
+          ./python/bin/python3 "$GITHUB_WORKSPACE/internal/odoo/check_requirements.py" requirements.txt

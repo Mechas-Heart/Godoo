@@ -1,0 +1,79 @@
+# godoo project: Odoo {{.Version}} on Nix.
+# Empty / commented values use the defaults shown; `godoo config` prints
+# the fully resolved configuration.
+
+name: {{.Name}}
+env: {{.Env}}                      # local (mailpit, dev mode, dev tools) | prod
+                                 # GODOO_ENV=prod overrides this, e.g. on a server
+
+odoo:
+  version: "{{.Version}}"
+  # repo: https://github.com/odoo/odoo.git
+  source: {{.Source}}            # odoo checkout; share one between projects if you like
+  addons:                        # directories that contain your modules
+    - ./addons
+    # - ./enterprise
+    # - ./oca/web
+  db: {{.Name}}                  # default database for install/update/shell/psql
+  admin_passwd: {{.AdminPasswd}}         # or GODOO_ADMIN_PASSWD; prod refuses "admin"
+  # dev: reload,qweb,xml         # --dev flags (local default); "" to disable
+  # workers: 0                   # local 0, prod 2
+  # max_cron_threads: 1
+  # list_db: true                # local true, prod false
+  # dbfilter: ^%d$
+  # options:                     # anything else for odoo.conf
+  #   limit_time_real: "3600"
+
+# Addon repositories, cloned on the odoo version's branch and added to
+# addons_path. Manage them with `godoo addons add|remove|update|list`.
+repos: []
+# repos:
+#   - name: web
+#     url: https://github.com/OCA/web.git
+#     branch: "{{.Version}}"
+#     path: ./repos/oca/web
+
+# Every instance gets its own block of ports; `godoo init` picks a free one.
+ports:
+  http: {{.Ports.HTTP}}                     # nginx -> open http://localhost:{{.Ports.HTTP}}
+  odoo: {{.Ports.Odoo}}                    # odoo-bin http (behind nginx)
+  gevent: {{.Ports.Gevent}}                  # websocket / longpolling (workers > 0)
+  postgres: {{.Ports.Postgres}}
+  smtp: {{.Ports.SMTP}}                     # mailpit SMTP
+  mailpit: {{.Ports.Mailpit}}                  # mailpit web UI
+
+postgres:
+  version: "{{.Postgres}}"
+  user: odoo
+  password: {{.PGPassword}}
+
+nginx:
+  listen: 127.0.0.1              # 0.0.0.0 to reach it from your network
+  # server_name: _
+  # max_body_size: 512m
+
+# mailpit:
+#   enabled: true                # local default true, prod false
+
+# Outgoing mail when mailpit is disabled.
+# smtp:
+#   server: smtp.example.com
+#   port: 587
+#   user: ""
+#   password: ""
+#   ssl: false
+#   from: odoo@example.com
+
+# Everything below comes from nix - there is no virtualenv and no pip.
+nix:
+  # nixpkgs: {{.Nixpkgs}}         # postgres, nginx, mailpit, git, wkhtmltopdf
+  # python_nixpkgs: {{.PythonNixpkgs}}  # python and odoo's python packages ...
+  # odoo_package: {{.OdooPackage}}       # ... the same set nixpkgs uses for this odoo package
+  python_packages: []            # python packages your addons need (nixpkgs names);
+                                 #   manage with `godoo pkg add|remove|list`
+  packages: []                   # other tools for the env, e.g. [ "imagemagick" ]
+
+  # Only when env is local - never in a prod environment:
+  dev_tools: true                # debugpy, ipython, ipdb, coverage, ruff, pre-commit, pgcli
+  local_python_packages: []      # `godoo pkg add --local NAME`
+  local_packages: []             # extra dev tools, e.g. [ "httpie" ]

@@ -1,0 +1,627 @@
+# godoo
+
+Odoo development environments on **Nix**, from one small Go binary.
+
+```
+godoo init shop --version 18.0
+cd shop
+godoo up
+#   Odoo     http://localhost:8069
+#   Mailpit  http://localhost:8025
+#   Postgres 127.0.0.1:5433 (user odoo)
+```
+
+That one `godoo up` builds everything the project needs, then sets up and starts
+its services: **PostgreSQL, Odoo, nginx and (locally) mailpit**.
+
+- **Isolated per project.** Each project has its own Odoo version, database
+  cluster, config, logs and ports. Run as many projects side by side as you
+  like, for example Odoo 15 next to Odoo 18.
+- **Nothing installed on your system.** Every program comes from Nix. There are
+  no containers, no daemons and no system packages.
+- **No virtualenv, no pip.** Python and every package Odoo imports come from
+  Nix as one read-only environment in `/nix/store`. Projects on the same Odoo
+  version share it.
+- **Plain processes.** The services are normal processes you can see with `ps`,
+  with one log file each. There is no supervisor to understand.
+- **Local and prod from one project.** Locally you get mailpit, code reload
+  and a debugging/linting toolset. In prod none of that is even installed.
+  `GODOO_ENV=prod` switches a checkout to prod without editing `godoo.yaml`.
+
+## Contents
+
+- [Requirements and install](#requirements-and-install)
+- [Quick start](#quick-start)
+- [The services](#the-services)
+- [Local vs prod](#local-vs-prod)
+- [Python packages and addon repos](#python-packages-and-addon-repos)
+- [Several Odoo versions side by side](#several-odoo-versions-side-by-side)
+- [Supported Odoo versions](#supported-odoo-versions)
+- [The godoo command](#the-godoo-command)
+- [Tools inside the environment](#tools-inside-the-environment)
+- [Configuration: godoo.yaml](#configuration-godooyaml)
+- [Project layout](#project-layout)
+- [How it works](#how-it-works)
+- [Debugging](#debugging)
+- [Code map](#code-map)
+- [Building and releasing](#building-and-releasing)
+- [License](#license)
+
+## Requirements and install
+
+- Linux or macOS. WSL2 works.
+- [Nix](https://nixos.org/download). Flakes do not need to be enabled, because
+  godoo passes `--extra-experimental-features "nix-command flakes"` itself.
+
+Install it in one of these three ways:
+
+```
+# 1. with Go (1.22+)
+go install github.com/Mechas-Heart/Godoo/cmd/godoo@latest
+
+# 2. a prebuilt binary (Linux/macOS, amd64/arm64)
+#    https://github.com/Mechas-Heart/Godoo/releases
+
+# 3. from a clone
+git clone https://github.com/Mechas-Heart/Godoo.git
+cd Godoo && make install    # -> $GOPATH/bin/godoo
+```
+
+## Quick start
+
+```
+godoo init shop --version 18.0     # creates ./shop with godoo.yaml
+cd shop
+godoo up                           # first run: ~5-10 min (downloads, odoo clone)
+godoo db create --demo             # database "shop" with demo data
+# open http://localhost:8069 and log in with admin / admin
+
+godoo scaffold my_module           # new module in ./addons
+godoo install my_module
+godoo logs -f                      # follow the odoo log
+
+godoo down                         # stop everything; data is kept
+```
+
+The first `godoo up` downloads the Nix packages (all pre-built, from
+cache.nixos.org) and clones Odoo. Later runs start in a few seconds.
+
+## The services
+
+`godoo up` sets up and starts these four services, in this order:
+
+| Service    | Listens on (defaults)              | What it is for |
+|------------|------------------------------------|----------------|
+| postgres   | `127.0.0.1:5433`                   | the project's own database cluster |
+| mailpit    | SMTP `127.0.0.1:1025`, web UI `:8025` | catches every email Odoo sends (local only) |
+| odoo       | `127.0.0.1:20000` (+ `20002` with workers) | `odoo-bin` from your checkout |
+| nginx      | `127.0.0.1:8069`                   | the address you open in the browser, proxies to Odoo |
+
+```
+browser ──> nginx :8069 ──> odoo :20000 ──> postgres :5433
+                               └── smtp ──> mailpit :1025   (web UI :8025)
+```
+
+**What "set up" means.** Before each service starts, godoo prepares it:
+
+- **postgres:** on the first start, `initdb` creates a cluster in
+  `.godoo/data/postgres`. It uses superuser `odoo`, password auth
+  (scram-sha-256), UTF8 and the C locale. It listens on TCP only, with no unix
+  socket. If the cluster was created by a different PostgreSQL major version,
+  godoo refuses to start rather than damage it.
+- **odoo:** `.godoo/conf/odoo.conf` is generated from `godoo.yaml` on every
+  start. That covers database settings, `addons_path`, ports, mail and
+  workers. Addon directories without any modules are left out, because Odoo
+  refuses to start with them.
+- **nginx:** `.godoo/conf/nginx.conf` is generated on every start. It runs as
+  your user, and every file it needs (pid, temp dirs, logs) stays inside the
+  project. It routes `/websocket` (or `/longpolling` before 16.0) to Odoo's
+  gevent port when workers are enabled.
+- **mailpit:** stores mail in `.godoo/data/mailpit.db` and accepts any SMTP
+  login, so Odoo's mail server settings don't matter.
+
+**How they run.** godoo starts each service as a normal background process,
+waits until its port answers, and moves on. If a service fails to start, godoo
+shows the last lines of its log. Each service has:
+
+- a pid file: `.godoo/run/<service>.pid`
+- a log file: `.godoo/logs/<service>.log`
+
+`godoo up` is safe to run again: services already running are left alone.
+`godoo down` stops them in reverse order (nginx, odoo, mailpit, postgres)
+with each one's graceful-shutdown signal. Your data is kept.
+
+**No systemd.** godoo does not install services into systemd. Nothing starts
+at boot and nothing restarts after a crash, so run `godoo up` again. This keeps
+it working without root on WSL, macOS and any Linux, and many projects never
+leave service files behind.
+
+**Day to day:**
+
+```
+godoo status             # state, pid, port and log file of each service
+godoo logs [service] -f  # default: odoo; "all" for every log
+godoo restart [service]  # default: odoo
+godoo run                # odoo in the foreground, for breakpoint()/pdb
+```
+
+`godoo run` starts the other services, stops the background Odoo and replaces
+itself with `odoo-bin`, so Ctrl-C and debuggers behave as usual.
+`godoo run --debugpy` does the same under debugpy; see
+[Local vs prod](#local-vs-prod).
+
+## Local vs prod
+
+`env:` in `godoo.yaml` decides what a project gets. Everything local-only is
+left out of the Nix environment in prod: it is not installed, rather than
+installed and switched off.
+
+| | `env: local` (default) | `env: prod` |
+|---|---|---|
+| Python + Odoo's packages, your `python_packages` | ✓ | ✓ |
+| PostgreSQL, nginx, wkhtmltopdf, rtlcss, git | ✓ | ✓ |
+| mailpit (catches all mail) | ✓ | – real `smtp:` instead |
+| `--dev=reload,qweb,xml` + watchdog (reload on save) | ✓ | – |
+| dev tools (`nix.dev_tools`) | ✓ | – |
+| `nix.local_python_packages`, `nix.local_packages`, wheels with `local: true` | ✓ | – |
+| workers | 0 (one process, debugger-friendly) | 2 |
+| database manager (`list_db`) | on | off |
+| `admin_passwd` | `admin` is fine | must be set; `admin` is refused |
+
+**The dev tools** (`nix.dev_tools`, on by default for local) are debugpy,
+ipython, ipdb, coverage, ruff, pre-commit and pgcli. What each is for and how
+to run it is in [Tools inside the environment](#tools-inside-the-environment).
+
+**Debugging in an IDE.** `godoo run --debugpy` starts Odoo in the foreground
+under debugpy on `127.0.0.1:5678`. Add `--wait` to hold Odoo until the
+debugger attaches, and `--debugpy-port N` when several projects run at once.
+A VS Code `launch.json` entry to attach:
+
+```json
+{ "name": "godoo", "type": "debugpy", "request": "attach",
+  "connect": { "host": "127.0.0.1", "port": 5678 } }
+```
+
+**Your own local-only packages:** `godoo pkg add --local pytest-odoo` (Python)
+or `nix.local_packages: [httpie]` (tools). They are never part of prod.
+
+**One project, both envs.** Commit `godoo.yaml` with `env: local` and run the
+same checkout as prod on a server:
+
+```
+export GODOO_ENV=prod
+export GODOO_ADMIN_PASSWD='a-long-random-secret'   # kept out of git
+godoo up
+```
+
+`godoo status` and `godoo config` show where `env` came from. Prod refuses
+to start while the master password is still `admin`. Alternatively, a prod
+project created with `godoo init --env prod` gets random passwords written into
+its own `godoo.yaml`.
+
+Prod gaps still to fill: TLS/HTTPS, start at boot (systemd) and backups.
+
+## Python packages and addon repos
+
+Python packages and addon repos are per project and recorded in
+`godoo.yaml`. A teammate who clones the project gets the same setup from
+`godoo up`. These commands edit `godoo.yaml` for you, keeping your comments.
+They then rebuild what changed and restart Odoo if it is running.
+
+```
+godoo pkg add pandas PyYAML          # pip-style names are fine
+godoo pkg add --local pytest-odoo    # local only, never in prod
+godoo pkg remove pandas
+godoo pkg list                       # what you have, and what is local-only
+
+godoo addons add web server-tools    # = OCA/web, OCA/server-tools, on this project's Odoo branch
+godoo addons add acme/addons --branch main
+godoo addons add https://gitlab.com/acme/tools.git
+godoo addons deps --add              # add the python deps that addon manifests declare
+godoo addons update                  # git pull --ff-only every repo
+godoo addons remove web --delete
+godoo addons list
+```
+
+**Where a Python package comes from**, checked in this order:
+
+1. **Odoo's own package set.** If the package is already there, nothing is
+   added.
+2. **nixpkgs**, at the project's pinned version. godoo tries the usual
+   spellings (`PyYAML` → `pyyaml`, `sentry_sdk` → `sentry-sdk`). The package
+   goes into `nix.python_packages`.
+3. **A pure-Python wheel from PyPI**, for packages nixpkgs lacks, such as
+   `openupgradelib` or `odoorpc`. The wheel's URL and sha256 are pinned in
+   `nix.pypi_packages` and Nix installs it, so pip is never involved. The
+   wheel's own dependencies go through the same three steps.
+4. Anything else is reported instead of added. A compiled package without a
+   pure wheel needs a small Nix derivation.
+
+**Addon repos** are cloned into `./repos/<owner>/<name>` and added to
+`addons_path`.
+
+- When you add a repo, godoo reads each module's `external_dependencies` and
+  lists the Python packages that are missing. Pass `--deps` to add them
+  straight away.
+- `addons remove` refuses while modules from that repo are installed in the
+  default database. Pass `--force` to override.
+- Repos are cloned with `--filter=blob:none`. That keeps the full history, so
+  `git log` and `git pull` work, but only downloads file contents for the
+  checked-out branch.
+
+The resulting `godoo.yaml` looks like this:
+
+```yaml
+nix:
+  python_packages:
+    - pandas
+  pypi_packages:
+    - name: openupgradelib
+      version: "3.13.7"
+      url: https://files.pythonhosted.org/.../openupgradelib-3.13.7-py2.py3-none-any.whl
+      hash: sha256-hpEPVRz5SfBihj6x3jvxWCr3fNKyvMMDHh7lI8RC41w=
+repos:
+  - name: web
+    url: https://github.com/OCA/web.git
+    branch: "18.0"
+    path: ./repos/oca/web
+```
+
+## Several Odoo versions side by side
+
+```
+godoo init legacy --version 15.0     # http 8069, postgres 5433, mailpit 8025
+godoo init shop   --version 18.0     # http 8070, postgres 5434, mailpit 8026
+godoo -C legacy up
+godoo -C shop up
+godoo list
+```
+
+`init` gives each project its own block of ports, written to `ports:` in
+`godoo.yaml`. It records them in `~/.local/state/godoo/instances.json`, so a
+stopped project keeps its ports. `godoo list` shows every project and whether
+it is running.
+
+To share one Odoo checkout between projects of the same version, use
+`godoo init --source /path/to/odoo` or set `odoo.source`.
+
+## Supported Odoo versions
+
+| Odoo | Python packages from          | Python | PostgreSQL | Tested |
+|------|-------------------------------|--------|------------|--------|
+| 15.0 | nixos-24.11 `odoo15`          | 3.10   | 14         | end to end |
+| 16.0 | nixos-25.05 `odoo16`          | 3.11   | 15         | requirements check |
+| 17.0 | nixos-25.05 `odoo17`          | 3.11   | 16         | requirements check |
+| 18.0 | nixos-25.05 `odoo` + 3 extras | 3.12   | 16         | end to end |
+| 19.0 | nixos-25.05 `odoo` + 4 extras | 3.12   | 17         | end to end |
+
+"End to end" means a database was created, apps were installed (sale,
+website, stock and OCA modules), pages were served through nginx and email
+reached mailpit. "Requirements check" means every package in that branch's
+`requirements.txt` is present in the Nix Python.
+
+nixpkgs packages Odoo itself, and godoo reuses that package's list of Python
+dependencies. The list includes the version fixes nixpkgs applies, for
+example docutils 0.17 for Odoo 17, so the set is known to work with that Odoo
+series. Odoo itself still runs from your git checkout. PostgreSQL, nginx,
+mailpit, git, wkhtmltopdf and rtlcss come from `nixos-25.05`.
+
+Package versions come from nixpkgs, not from the exact pins in Odoo's
+`requirements.txt`. `godoo doctor` checks that every requirement is present;
+`--versions` lists them side by side.
+
+Odoo 11 to 14 are not supported. nixpkgs never packaged them, so there is no
+tested package set to build on.
+
+The table lives in `internal/versions/versions.go`. Supporting a new Odoo
+release means adding one row.
+
+## The godoo command
+
+```
+godoo [-v] [-C DIR] <command> [arguments] [flags] [-- passthrough]
+```
+
+- `-v` prints every command godoo runs (nix, git, psql, odoo-bin, ...).
+- `-C DIR` works on the project in DIR instead of the current directory.
+  Without it, godoo looks for `godoo.yaml` in the current directory and its
+  parents, like git does.
+- Flags can come before or after arguments. Everything after `--` is passed
+  unchanged to the underlying program (`odoo-bin`, `psql`).
+- `godoo help` lists all commands. `godoo <command> -h` shows a command's
+  flags.
+
+### Projects
+
+| Command | What it does |
+|---|---|
+| `godoo init [DIR]` | create a project: `godoo.yaml`, `nix/flake.nix`, `addons/`, `.gitignore`; picks free ports |
+| | `--version 18.0` (15.0–19.0) · `--env local\|prod` · `--name NAME` · `--source PATH` (existing odoo checkout) |
+| `godoo list [--prune]` | every project on this machine, its Odoo version and whether it runs; `--prune` forgets deleted ones |
+| `godoo config` | the fully resolved `godoo.yaml` (defaults filled in) and where `env` came from |
+| `godoo doctor [--versions]` | check nix, Odoo's requirements vs the Nix Python, addon dependencies, ports |
+| `godoo destroy [--yes]` | stop everything and delete `.godoo/` (**all databases and filestore**); keeps your code |
+| `godoo version` | godoo's version |
+
+### Services
+
+| Command | What it does |
+|---|---|
+| `godoo up` | build what is missing, then start postgres, mailpit, odoo, nginx |
+| `godoo down` | stop all services; data is kept |
+| `godoo status` | state, pid, port and log file of each service |
+| `godoo restart [SERVICE]` | restart one service: `odoo` (default), `postgres`, `nginx`, `mailpit` |
+| `godoo logs [SERVICE\|all] [-f] [-n 100]` | show a log (default `odoo`); `-f` follows it |
+| `godoo run [-- ODOO_ARGS]` | Odoo in the foreground instead of the background, for `breakpoint()` and pdb |
+| | `--debugpy` (attach an IDE debugger) · `--wait` (hold until it attaches) · `--debugpy-port 5678` |
+
+### Odoo
+
+| Command | Runs |
+|---|---|
+| `godoo install MODULES [-d DB]` | `odoo-bin -d DB -i MODULES --stop-after-init --no-http` |
+| `godoo update MODULES [-d DB]` | `odoo-bin -d DB -u MODULES --stop-after-init --no-http` |
+| `godoo test MODULES [-d DB] [--tags T]` | install/update with `--test-enable` (and `--test-tags T`) |
+| `godoo shell [-d DB]` | `odoo-bin shell` (IPython locally) |
+| `godoo scaffold NAME` | `odoo-bin scaffold NAME` into the first addons directory |
+| `godoo odoo -- ARGS` | `odoo-bin ARGS` with the project's config, e.g. `godoo odoo -- --help` |
+
+`MODULES` can be comma or space separated (`sale,stock` or `sale stock`).
+`DB` defaults to `odoo.db` in `godoo.yaml` (the project name). These commands
+start postgres (and mailpit) if needed, and work whether or not the Odoo
+server is running.
+
+### Databases
+
+| Command | What it does |
+|---|---|
+| `godoo db list` | databases in the project's postgres |
+| `godoo db create [NAME]` | new database with `base` (NAME defaults to `odoo.db`) |
+| | `--demo` (demo data) · `--lang fr_FR` · `-i sale,stock` (more modules) |
+| `godoo db drop NAME [--yes]` | drop a database and its filestore (asks first) |
+| `godoo psql [DB] [-- PSQL_ARGS]` | psql connected to the project's postgres (DB defaults to `odoo.db`) |
+
+### Packages and addon repos
+
+These edit `godoo.yaml`, rebuild what changed and restart Odoo if it runs. See
+[Python packages and addon repos](#python-packages-and-addon-repos).
+
+| Command | What it does |
+|---|---|
+| `godoo pkg add NAME... [--local]` | add Python packages (pip-style names); `--local`: never in prod |
+| `godoo pkg remove NAME...` | remove them |
+| `godoo pkg list` | the project's packages, where each comes from, which are local-only |
+| `godoo addons add REPO...` | clone addon repos on the project's Odoo branch and add them to `addons_path` |
+| | REPO: `web` (= OCA/web) · `owner/repo` · a git URL · `--branch B` · `--path DIR` · `--deps` |
+| `godoo addons update [NAME...]` | `git pull --ff-only` the repos (all by default) |
+| `godoo addons remove NAME... [--delete] [--force]` | drop repos from `godoo.yaml` (`--delete` also removes the clone) |
+| `godoo addons list` | repos with branch, commit and module count |
+| `godoo addons deps [--add]` | Python packages the addons' manifests need but are missing |
+
+### Environment
+
+| Command | What it does |
+|---|---|
+| `godoo setup` | build the Nix environment, clone Odoo and the addon repos (`up` does this when needed) |
+| `godoo nix-update` | move `nix/flake.lock` to the latest packages of the pinned nixpkgs, then rebuild |
+| `godoo sh` | a subshell with the project's tools on `PATH` (`exit` to leave) |
+| `godoo env` | the same environment as `export` lines: `eval "$(godoo env)"` |
+
+## Tools inside the environment
+
+Each project's tools live in its Nix environment (`.godoo/env/bin`). They are
+**not on your normal `PATH`**: that is what keeps projects and Odoo versions
+apart. A project on Odoo 15 has its own `python3` and `psql`, which differ
+from the ones in an Odoo 18 project. There are three ways to use them:
+
+```
+godoo psql shop                 # 1. through a godoo command (when one exists)
+
+godoo sh                        # 2. a subshell with the project's tools first on PATH
+ruff check addons/
+exit
+
+eval "$(godoo env)"             # 3. load them into your current shell
+```
+
+`godoo sh` and `godoo env` also set `PGHOST`, `PGPORT`, `PGUSER` and
+`PGPASSWORD` (so `psql`, `pgcli`, `pg_dump` reach the project's postgres
+without flags) and `ODOO_RC` (the generated `odoo.conf`). `PGDATABASE` is
+deliberately not set, so name the database: `psql shop`, `pgcli shop`.
+
+| Tool | local | prod | Use it for | Example (inside `godoo sh`) |
+|---|:-:|:-:|---|---|
+| `python3` | ✓ | ✓ | Python with all of Odoo's packages | `python3 odoo/odoo-bin --version` |
+| `psql`, `pg_dump`, `pg_restore`, `createdb`, `dropdb` | ✓ | ✓ | PostgreSQL client tools | `pg_dump -Fc shop > shop.dump` |
+| `git` | ✓ | ✓ | used for the odoo and addon repos | |
+| `wkhtmltopdf` | ✓ | ✓ | PDF reports (Odoo calls it) | |
+| `rtlcss` | ✓ | ✓ | right-to-left languages (Odoo calls it) | |
+| `postgres`, `nginx` | ✓ | ✓ | run by godoo as services | |
+| `mailpit` | ✓ | – | run by godoo as a service | |
+| `ipython` | ✓ | – | interactive Python; also used by `godoo shell` | `ipython` |
+| `debugpy` | ✓ | – | IDE debugging, via `godoo run --debugpy` | |
+| `ipdb` (Python module) | ✓ | – | `import ipdb; ipdb.set_trace()` in your code | |
+| `coverage` | ✓ | – | test coverage | `coverage run odoo/odoo-bin -c $ODOO_RC -d shop -u my_module --test-enable --stop-after-init --no-http` |
+| `ruff` | ✓ | – | lint and format Python | `ruff check addons/` · `ruff format addons/` |
+| `pre-commit` | ✓ | – | OCA-style hooks in a repo that has `.pre-commit-config.yaml` | `cd repos/oca/web && pre-commit run --all-files` |
+| `pgcli` | ✓ | – | psql with autocompletion | `pgcli shop` |
+| your `nix.packages` | ✓ | ✓ | any other tool from nixpkgs | |
+| your `nix.local_packages` | ✓ | – | any other dev tool from nixpkgs | |
+
+Notes:
+- **There is no `odoo` command.** Odoo runs from your checkout as
+  `odoo/odoo-bin`. Use `godoo odoo -- ARGS`, which adds the right Python and
+  `-c odoo.conf`, or call `python3 odoo/odoo-bin -c $ODOO_RC` inside
+  `godoo sh`.
+- The local-only tools come from `nix.dev_tools` (on by default; set it to
+  `false` to drop them) and from your `local_*` lists. See
+  [Local vs prod](#local-vs-prod).
+- `pre-commit` downloads its hook tools itself, into `~/.cache/pre-commit`,
+  the first time it runs in a repo.
+
+## Configuration: godoo.yaml
+
+`godoo init` writes a fully commented `godoo.yaml`. Values you leave out get a
+default for your Odoo version. `godoo config` prints the resolved result. The
+main sections:
+
+| Section    | Holds |
+|------------|-------|
+| `odoo`     | version, source checkout, local addons dirs, default db, dev mode, workers, extra `odoo.conf` options |
+| `ports`    | one port per service (assigned by `init`) |
+| `postgres` | version, user, password |
+| `nginx`    | listen address (`0.0.0.0` to reach it from your network), server name, upload size |
+| `mailpit`  | on/off (defaults: on for local, off for prod) |
+| `smtp`     | real outgoing mail server when mailpit is off |
+| `repos`    | addon repositories (`godoo addons ...`) |
+| `env`      | `local` or `prod` ([Local vs prod](#local-vs-prod)); `GODOO_ENV` overrides it |
+| `nix`      | nixpkgs pins, `python_packages`, `pypi_packages`, `packages`; local-only: `dev_tools`, `local_python_packages`, `local_packages` |
+
+After editing `godoo.yaml` by hand, run `godoo up`. It regenerates the configs
+and rebuilds the Nix environment if needed. A service that is already running
+keeps its old settings until you restart it with `godoo restart <service>`.
+
+## Project layout
+
+```
+shop/
+├── godoo.yaml          # your settings - the only file you normally edit
+├── addons/             # your modules
+├── repos/oca/web/      # addon repos (godoo addons add)
+├── odoo/               # odoo source checkout (git, --depth 1)
+├── nix/
+│   ├── flake.nix       # generated from godoo.yaml + env (gitignored)
+│   └── flake.lock      # exact nixpkgs revisions - commit this
+└── .godoo/             # generated state; `godoo destroy` deletes it
+    ├── env -> /nix/store/...-godoo-shop-env   python + packages, postgres, nginx, ...
+    ├── conf/           # odoo.conf, nginx.conf (regenerated on every start)
+    ├── data/           # postgres cluster, odoo filestore, mailpit.db
+    ├── logs/           # one log per service
+    └── run/            # pid files, nginx temp dirs
+```
+
+The generated `.gitignore` excludes `.godoo/`, `odoo/`, `repos/` and
+`nix/flake.nix`, because `godoo up` recreates them from `godoo.yaml`.
+`flake.nix` differs between local and prod, so committing it would make a prod
+checkout look modified. Commit `nix/flake.lock`: it pins the exact package
+versions.
+
+## How it works
+
+1. **Nix environment.** `nix/flake.nix` builds a single environment and links
+   it to `.godoo/env`. That link is also a GC root, so `nix-collect-garbage`
+   leaves it alone. The environment holds:
+   - Python with Odoo's packages
+   - PostgreSQL
+   - nginx
+   - git
+   - wkhtmltopdf
+   - rtlcss
+   - local only: mailpit and the dev tools
+
+   Everything comes pre-built from cache.nixos.org.
+2. **Python.** The flake uses `python.withPackages` with these packages:
+   - the dependency list of nixpkgs' Odoo package
+   - your `python_packages` and `pypi_packages`
+   - local only: watchdog, debugpy, ipython, ipdb, coverage and your
+     `local_python_packages`
+
+   The local-only lists appear separately in the flake (`localPythonPackages`,
+   `localPackages`). In prod they are empty, so you can see what was left out.
+
+   One package is replaced where nixpkgs breaks Odoo: the commented `fixes`
+   block in the flake. nixpkgs 25.05 ships passlib 1.9 (the libpass fork),
+   which prints every Odoo log line twice, so godoo uses passlib 1.7.4, the
+   version Odoo pins.
+3. **Services.** godoo starts the services as described in
+   [The services](#the-services). Its whole process supervisor is
+   `internal/proc/proc.go`, about 150 lines.
+
+**Environment variables.** godoo starts every process with the project's
+environment:
+- `PATH` puts the Nix environment first.
+- `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD` point at the project's
+  postgres.
+- `ODOO_RC` points at the generated `odoo.conf`.
+
+It also drops some variables from your shell:
+- `PYTHONPATH`, `VIRTUAL_ENV` and `LD_LIBRARY_PATH`, which would leak packages
+  from outside the environment into it.
+- `PGDATABASE`, because Odoo 19 reads it as the default database.
+
+## Debugging
+
+- `godoo -v up` prints every `nix`, `git` and service command it runs.
+- `godoo status` shows each service's log file. `godoo logs all -f` follows
+  all of them.
+- `godoo doctor` checks Nix, missing requirements, addon dependencies and port
+  conflicts.
+- `eval "$(godoo env)"` gives your own shell the project's `python3` (with all
+  of Odoo's packages), plus `psql` already pointed at the right port and user,
+  and `ODOO_RC`. `godoo sh` opens a subshell with the same environment.
+- You can use the flake without godoo: `nix build path:./nix -o .godoo/env`,
+  or just the Python with `nix build path:./nix#python`.
+- Every generated file starts with a comment saying where it comes from.
+- A port already in use is reported by name. Change it under `ports:` in
+  `godoo.yaml`.
+
+## Code map
+
+```
+cmd/godoo/              main()
+internal/cli/           one file per command group (cmd_*.go); root.go = dispatch;
+                        pkg_plan.go = where each python package comes from
+internal/config/        godoo.yaml types, defaults, validation, ports, in-place edits
+internal/versions/      per-Odoo-version knowledge (nixpkgs pin, packages, flags)
+internal/project/       paths inside a project + the process environment
+internal/nix/           flake rendering, nix build/eval, python package lookup
+internal/pypi/          pure-python wheels from PyPI for what nixpkgs lacks
+internal/odoo/          odoo + repo clones, odoo.conf, odoo-bin argv, dependency checks
+internal/services/      postgres.go, mailpit.go, odoo.go, nginx.go + manager.go
+internal/proc/          start/stop/wait for background processes
+internal/registry/      the list of projects on this machine
+internal/templates/     *.tmpl for flake.nix, odoo.conf, nginx.conf, godoo.yaml
+```
+
+## Building and releasing
+
+```
+make build    # bin/godoo
+make test     # go test ./...
+make dist     # static binaries for linux/darwin, amd64/arm64, in dist/
+```
+
+**CI** (`.github/workflows/ci.yml`) runs on every push and pull request:
+- gofmt, the license-header check, vet, the tests and a build.
+- For every supported Odoo version, it builds the Nix Python and checks it
+  against that branch's real `requirements.txt`.
+
+**Releases** (`.github/workflows/release.yml`): pushing a tag builds the
+static binaries and attaches them to a GitHub release.
+
+```
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+## License
+
+godoo is licensed under the [Apache License 2.0](LICENSE).
+Copyright 2026 Mechas Heart. See [NOTICE](NOTICE).
+
+Every source file starts with:
+
+```go
+// Copyright 2026 Mechas Heart
+// SPDX-License-Identifier: Apache-2.0
+```
+
+CI fails if a new `.go` or `.py` file is missing it.
+
+- **Files godoo generates are yours.** `godoo.yaml`, `nix/flake.nix`,
+  `odoo.conf`, `nginx.conf` and everything else godoo writes into your project
+  may be used, changed and shared however you like, with no license conditions
+  from godoo.
+- **What godoo runs keeps its own license.** godoo does not include Odoo,
+  OCA modules or nixpkgs packages. It downloads and runs them, and each is
+  covered by its own license: Odoo Community is LGPL-3.0, and most OCA modules
+  are AGPL-3.0 or LGPL-3.0.

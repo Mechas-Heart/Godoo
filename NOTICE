@@ -1,0 +1,11 @@
+godoo
+Copyright 2026 Mechas Heart
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes gopkg.in/yaml.v3, licensed under the MIT and Apache 2.0
+licenses (https://github.com/go-yaml/yaml).
+
+godoo does not include or distribute Odoo, OCA modules or nixpkgs. It
+downloads and runs them, and each keeps its own license (Odoo: LGPL-3.0,
+most OCA modules: AGPL-3.0 or LGPL-3.0).
