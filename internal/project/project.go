@@ -7,6 +7,7 @@
 //
 //	godoo.yaml           your settings
 //	addons/              your addons
+//	enterprise/          odoo enterprise addons (edition: enterprise)
 //	repos/<owner>/<name> addon repositories from `repos:` (godoo addons add)
 //	odoo/                odoo source checkout (odoo.source)
 //	nix/flake.nix        generated nix environment (+ flake.lock pins)
@@ -89,6 +90,23 @@ func (p *Project) EnsureDirs() error {
 		}
 	}
 	return nil
+}
+
+// EnterpriseDir is the enterprise addons checkout, or "" for community.
+func (p *Project) EnterpriseDir() string {
+	if !p.Cfg.EnterpriseOn() {
+		return ""
+	}
+	return p.Abs(p.Cfg.Odoo.Enterprise.Path)
+}
+
+// AllAddonsDirs is every addons directory besides odoo's own: enterprise
+// (if enabled), odoo.addons and repos. Used to scan module dependencies.
+func (p *Project) AllAddonsDirs() []string {
+	if dir := p.EnterpriseDir(); dir != "" {
+		return append([]string{dir}, p.AddonsPaths()...)
+	}
+	return p.AddonsPaths()
 }
 
 // AddonsPaths returns the addons directories as absolute paths: odoo.addons

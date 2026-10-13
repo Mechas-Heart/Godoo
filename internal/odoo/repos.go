@@ -34,6 +34,44 @@ func EnsureRepos(ctx context.Context, p *project.Project) error {
 	return nil
 }
 
+// EnsureEnterprise clones the enterprise addons when the edition is
+// enterprise and they are not there yet. Without a branch in godoo.yaml it
+// detects one (see DetectBranch) and saves it, so teammates get the same.
+func EnsureEnterprise(ctx context.Context, p *project.Project) error {
+	c := p.Cfg
+	r := c.EnterpriseRepo()
+	if _, err := os.Stat(filepath.Join(p.Abs(r.Path), ".git")); err == nil {
+		return nil
+	}
+	detected := r.Branch == ""
+	if detected {
+		b, err := DetectBranch(ctx, p, r.URL, c.Odoo.Version)
+		if err != nil {
+			return err
+		}
+		r.Branch = b.Name
+		WarnFallback(b, r.URL, c.Odoo.Version)
+	}
+	if err := CloneRepo(ctx, p, r); err != nil {
+		return err
+	}
+	if detected { // saved only after a successful clone
+		if err := config.SetEdition(p.Root, config.EditionEnterprise, config.EnterpriseConfig{Branch: r.Branch}); err != nil {
+			return err
+		}
+		ui.Info("saved enterprise branch %s to godoo.yaml", r.Branch)
+	}
+	return nil
+}
+
+// WarnFallback tells the user when DetectBranch had to use the default branch.
+func WarnFallback(b Branch, url, version string) {
+	if b.Fallback {
+		ui.Warn("%s has no %s branch; using its default branch %q - make sure it supports Odoo %s",
+			url, strings.Join(branchCandidates(version), " or "), b.Name, version)
+	}
+}
+
 // CloneRepo clones one repo at its branch into its path.
 func CloneRepo(ctx context.Context, p *project.Project, r config.Repo) error {
 	dir := p.Abs(r.Path)
@@ -63,6 +101,11 @@ func UpdateRepo(ctx context.Context, p *project.Project, r config.Repo) error {
 	ui.Info("updating %s (%s)", r.Name, r.Branch)
 	_, err := git(ctx, p, dir, "pull", "--ff-only", "origin", r.Branch)
 	return err
+}
+
+// CurrentBranch returns the branch checked out in dir.
+func CurrentBranch(ctx context.Context, p *project.Project, dir string) (string, error) {
+	return git(ctx, p, dir, "rev-parse", "--abbrev-ref", "HEAD")
 }
 
 // RepoStatus is a one-line summary for `godoo addons list`.

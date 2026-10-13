@@ -29,10 +29,14 @@ const gitignore = `# godoo: generated state (env link, data, logs), the odoo che
 odoo/
 repos/
 nix/flake.nix
+
+# Odoo Enterprise is proprietary: never commit it, especially to a public repo.
+enterprise/
 `
 
 type initData struct {
 	Name, Env, Version, Source string
+	Edition, EnterpriseRepo    string
 	AdminPasswd, PGPassword    string
 	Postgres                   string
 	Nixpkgs, PythonNixpkgs     string
@@ -46,6 +50,8 @@ func cmdInit(ctx context.Context, args []string) error {
 	name := fs.String("name", "", "project name (default: directory name)")
 	env := fs.String("env", config.EnvLocal, "local or prod")
 	source := fs.String("source", "./odoo", "path of the odoo checkout (cloned there if missing)")
+	edition := fs.String("edition", config.EditionCommunity, "community or enterprise")
+	entRepo := fs.String("enterprise-repo", config.DefaultEnterpriseURL, "enterprise addons repository (with --edition enterprise)")
 	pos, _, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -68,6 +74,9 @@ func cmdInit(ctx context.Context, args []string) error {
 	if *env != config.EnvLocal && *env != config.EnvProd {
 		return fmt.Errorf("--env must be %s or %s", config.EnvLocal, config.EnvProd)
 	}
+	if *edition != config.EditionCommunity && *edition != config.EditionEnterprise {
+		return fmt.Errorf("--edition must be %s or %s", config.EditionCommunity, config.EditionEnterprise)
+	}
 	profile, err := versions.ProfileFor(*version)
 	if err != nil {
 		return err
@@ -79,6 +88,7 @@ func cmdInit(ctx context.Context, args []string) error {
 
 	data := initData{
 		Name: *name, Env: *env, Version: profile.Branch, Source: *source,
+		Edition: *edition, EnterpriseRepo: *entRepo,
 		AdminPasswd: "admin", PGPassword: "odoo",
 		Postgres: profile.Postgres, Ports: ports,
 		Nixpkgs: versions.ServicesNixpkgs, PythonNixpkgs: profile.PythonNixpkgs, OdooPackage: profile.OdooPackage,

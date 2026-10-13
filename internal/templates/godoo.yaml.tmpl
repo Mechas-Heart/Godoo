@@ -15,6 +15,12 @@ odoo:
     # - ./enterprise
     # - ./oca/web
   db: {{.Name}}                  # default database for install/update/shell/psql
+  edition: {{.Edition}}             # community | enterprise (`godoo edition enterprise`)
+  # Used when edition is enterprise. The branch is detected on first clone
+  # ({{.Version}}, then the major version, then the repo's default branch) and saved here.
+  enterprise:
+    url: {{.EnterpriseRepo}}   # odoo/enterprise or your company's mirror
+    path: ./enterprise
   admin_passwd: {{.AdminPasswd}}         # or GODOO_ADMIN_PASSWD; prod refuses "admin"
   # dev: reload,qweb,xml         # --dev flags (local default); "" to disable
   # workers: 0                   # local 0, prod 2

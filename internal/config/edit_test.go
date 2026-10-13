@@ -81,3 +81,34 @@ func TestSeqRemove(t *testing.T) {
 		t.Errorf("left = %v", got)
 	}
 }
+
+func TestSetEditionOrdersEnterpriseKeys(t *testing.T) {
+	dir := writeConfig(t, `name: shop
+odoo:
+  version: "18.0"
+  edition: community
+  # where enterprise comes from
+  enterprise:
+    url: git@example.com:acme/ent.git # our mirror
+    path: ./enterprise
+`+ports)
+	err := SetEdition(dir, EditionEnterprise, EnterpriseConfig{Branch: "18"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := os.ReadFile(filepath.Join(dir, FileName))
+	text := string(out)
+	url, branch, path := strings.Index(text, "url:"), strings.Index(text, "branch:"), strings.Index(text, "path:")
+	if !(url < branch && branch < path) {
+		t.Errorf("keys not in url, branch, path order:\n%s", text)
+	}
+	for _, want := range []string{"edition: enterprise", `branch: "18"`, "# our mirror", "# where enterprise comes from"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+	c, err := Load(dir)
+	if err != nil || !c.EnterpriseOn() || c.Odoo.Enterprise.Branch != "18" {
+		t.Errorf("reload: %v %+v", err, c.Odoo.Enterprise)
+	}
+}

@@ -89,7 +89,11 @@ func confOptions(p *project.Project) []option {
 // contains a directory without modules, so empty ones are skipped (with a
 // note) until you add a module to them.
 func AddonsPath(p *project.Project) []string {
-	paths := []string{filepath.Join(p.SourceDir(), "addons")}
+	var paths []string
+	if dir := p.EnterpriseDir(); dir != "" {
+		paths = append(paths, dir) // Odoo's recommended order: enterprise first
+	}
+	paths = append(paths, filepath.Join(p.SourceDir(), "addons"))
 	for _, dir := range p.AddonsPaths() {
 		if hasModules(dir) {
 			paths = append(paths, dir)

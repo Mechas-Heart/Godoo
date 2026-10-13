@@ -58,6 +58,9 @@ type OdooConfig struct {
 	DBFilter       string            `yaml:"dbfilter"`
 	ListDB         *bool             `yaml:"list_db"`
 	Options        map[string]string `yaml:"options"`
+
+	Edition    string           `yaml:"edition"`    // community | enterprise (see edition.go)
+	Enterprise EnterpriseConfig `yaml:"enterprise"` // where the enterprise addons come from
 }
 
 type PostgresConfig struct {
@@ -191,6 +194,9 @@ func (c *Config) resolve() error {
 	c.Odoo.Version = profile.Branch
 
 	if err := c.resolveOdoo(); err != nil {
+		return err
+	}
+	if err := c.resolveEdition(); err != nil {
 		return err
 	}
 	if err := c.Ports.validate(); err != nil {

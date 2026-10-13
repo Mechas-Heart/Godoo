@@ -44,6 +44,7 @@ func commands() []command {
 		{"update", "MODULES [-d DB]", "update modules", cmdUpdate},
 		{"test", "MODULES [-d DB] [--tags T]", "install/update modules and run their tests", cmdTest},
 		{"scaffold", "NAME", "create a new module in the first addons directory", cmdScaffold},
+		{"edition", "[community|enterprise] [--repo URL] [--branch B]", "show or switch the Odoo edition (enterprise addons repo)", cmdEdition},
 		{"pkg", "add|remove|list [NAME...]", "python packages for your addons (nixpkgs, else a pinned PyPI wheel)", cmdPkg},
 		{"addons", "add|remove|update|list|deps [REPO...]", "addon git repos, e.g. `godoo addons add web` (OCA)", cmdAddons},
 		{"db", "list|create|drop [NAME]", "manage databases", cmdDB},

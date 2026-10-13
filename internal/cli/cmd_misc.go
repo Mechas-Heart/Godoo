@@ -110,7 +110,7 @@ func cmdDoctor(ctx context.Context, args []string) error {
 		if err := odoo.CheckRequirements(ctx, p, *showVersions); err != nil {
 			check(false, "", "missing packages: add them with `godoo pkg add NAME...`")
 		}
-		missing, err := odoo.MissingPythonDeps(ctx, p, p.AddonsPaths())
+		missing, err := odoo.MissingPythonDeps(ctx, p, p.AllAddonsDirs())
 		switch {
 		case err != nil:
 			check(false, "", fmt.Sprint(err))

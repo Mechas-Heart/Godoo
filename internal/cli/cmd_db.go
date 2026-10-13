@@ -82,6 +82,9 @@ func dbCreate(ctx context.Context, args []string) error {
 		return err
 	}
 	install := "base"
+	if p.Cfg.EnterpriseOn() {
+		install += ",web_enterprise" // makes the new database an Enterprise one
+	}
 	if *modules != "" {
 		install += "," + *modules
 	}

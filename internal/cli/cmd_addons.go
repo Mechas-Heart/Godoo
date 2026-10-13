@@ -45,7 +45,7 @@ func cmdAddons(ctx context.Context, args []string) error {
 
 func addonsAdd(ctx context.Context, args []string) error {
 	fs := newFlags("addons")
-	branch := fs.String("branch", "", "git branch (default: the odoo version, e.g. 17.0)")
+	branch := fs.String("branch", "", "git branch (default: detected - 18.0, then 18, then the repo's default branch)")
 	path := fs.String("path", "", "where to clone it (default: ./repos/<owner>/<name>)")
 	deps := fs.Bool("deps", false, "also add the python packages the modules need")
 	specs, _, err := parse(fs, args)
@@ -73,15 +73,21 @@ func addonsAdd(ctx context.Context, args []string) error {
 			ui.Info("%s is already in godoo.yaml (%s)", existing.Name, existing.Path)
 			continue
 		}
-		r.Branch = p.Cfg.Odoo.Version
-		if *branch != "" {
-			r.Branch = *branch
-		}
 		if *path != "" {
 			r.Path = *path
 		}
-		// Clone first: a typo or missing branch never ends up in godoo.yaml.
 		ui.Step("adding %s", r.Name)
+		r.Branch = *branch
+		if r.Branch == "" {
+			b, err := odoo.DetectBranch(ctx, p, r.URL, p.Cfg.Odoo.Version)
+			if err != nil {
+				return err
+			}
+			r.Branch = b.Name
+			odoo.WarnFallback(b, r.URL, p.Cfg.Odoo.Version)
+			ui.Info("branch %s", r.Branch)
+		}
+		// Clone first: a typo or missing branch never ends up in godoo.yaml.
 		if err := odoo.CloneRepo(ctx, p, r); err != nil {
 			return err
 		}
@@ -334,7 +340,7 @@ func addonsDeps(ctx context.Context, args []string) error {
 	if err := setup(ctx, p, setupOptions{}); err != nil {
 		return err
 	}
-	if err := handleMissingDeps(ctx, p, p.AddonsPaths(), *add); err != nil {
+	if err := handleMissingDeps(ctx, p, p.AllAddonsDirs(), *add); err != nil {
 		return err
 	}
 	if *add {

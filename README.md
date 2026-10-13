@@ -34,6 +34,7 @@ its services: **PostgreSQL, Odoo, nginx and (locally) mailpit**.
 - [Quick start](#quick-start)
 - [The services](#the-services)
 - [Local vs prod](#local-vs-prod)
+- [Community or Enterprise](#community-or-enterprise)
 - [Python packages and addon repos](#python-packages-and-addon-repos)
 - [Several Odoo versions side by side](#several-odoo-versions-side-by-side)
 - [Supported Odoo versions](#supported-odoo-versions)
@@ -240,6 +241,16 @@ godoo addons list
 **Addon repos** are cloned into `./repos/<owner>/<name>` and added to
 `addons_path`.
 
+- **The branch is detected.** Repositories name their branches differently,
+  so without `--branch` godoo asks the remote which branches exist and picks,
+  in this order:
+  1. the version, e.g. `18.0` (OCA, odoo/enterprise)
+  2. the major version, e.g. `18`
+  3. the repository's default branch, e.g. `main`, with a warning, because it
+     may not support this Odoo version
+
+  The chosen branch is written to `godoo.yaml`.
+
 - When you add a repo, godoo reads each module's `external_dependencies` and
   lists the Python packages that are missing. Pass `--deps` to add them
   straight away.
@@ -266,6 +277,57 @@ repos:
     branch: "18.0"
     path: ./repos/oca/web
 ```
+
+## Community or Enterprise
+
+Projects run Odoo Community by default. Enterprise is Community plus the
+**enterprise addons repository**. You need access to it through an Odoo
+Enterprise subscription or partnership: `odoo/enterprise` on GitHub, or your
+company's mirror of it.
+
+```
+godoo edition enterprise                                  # git@github.com:odoo/enterprise.git
+godoo edition enterprise --repo git@github.com:acme/odoo-enterprise.git
+godoo edition enterprise --branch 18.0                    # skip detection
+godoo edition                                             # show the current edition
+godoo edition community                                   # switch back
+godoo init shop --version 18.0 --edition enterprise       # from the start
+```
+
+What `godoo edition enterprise` does:
+
+1. Finds the branch, the same way as for addon repos: `18.0`, then `18`, then
+   the default branch (`main`).
+2. Clones it into `./enterprise`. A wrong URL or missing access fails here,
+   before anything is written.
+3. Writes `odoo.edition` and `odoo.enterprise` to `godoo.yaml`.
+4. Puts `enterprise/` first in `addons_path` (Odoo's recommended order) and
+   restarts Odoo.
+
+```yaml
+odoo:
+  edition: enterprise
+  enterprise:
+    url: git@github.com:odoo/enterprise.git
+    branch: "18.0"
+    path: ./enterprise
+```
+
+- **Databases.** `godoo db create` installs `web_enterprise` in enterprise
+  mode. To turn an existing Community database into an Enterprise one, run
+  `godoo install web_enterprise -d DB`.
+- **Switching back.** `godoo edition community` refuses while enterprise
+  modules are installed in the default database, because that database would
+  break without their code. `--force` overrides it. The `./enterprise`
+  checkout is kept.
+- **Teammates.** With `edition: enterprise` in `godoo.yaml`, `godoo up` clones
+  the enterprise addons for them, using their own access.
+- **Keep it private.** Odoo Enterprise is proprietary. The generated
+  `.gitignore` excludes `enterprise/`. Never commit it, least of all to a
+  public repository.
+- **Private repositories need your credentials.** git uses your SSH key or
+  credential helper. If the key has a passphrase, git asks for it in your
+  terminal.
 
 ## Several Odoo versions side by side
 
@@ -336,7 +398,8 @@ godoo [-v] [-C DIR] <command> [arguments] [flags] [-- passthrough]
 | Command | What it does |
 |---|---|
 | `godoo init [DIR]` | create a project: `godoo.yaml`, `nix/flake.nix`, `addons/`, `.gitignore`; picks free ports |
-| | `--version 18.0` (15.0–19.0) · `--env local\|prod` · `--name NAME` · `--source PATH` (existing odoo checkout) |
+| | `--version 18.0` (15.0–19.0) · `--env local\|prod` · `--edition community\|enterprise` · `--enterprise-repo URL` · `--name NAME` · `--source PATH` (existing odoo checkout) |
+| `godoo edition [community\|enterprise]` | show or switch the edition: `--repo URL` · `--branch B` · `--path DIR` · `--force` ([details](#community-or-enterprise)) |
 | `godoo list [--prune]` | every project on this machine, its Odoo version and whether it runs; `--prune` forgets deleted ones |
 | `godoo config` | the fully resolved `godoo.yaml` (defaults filled in) and where `env` came from |
 | `godoo doctor [--versions]` | check nix, Odoo's requirements vs the Nix Python, addon dependencies, ports |
@@ -376,7 +439,7 @@ server is running.
 | Command | What it does |
 |---|---|
 | `godoo db list` | databases in the project's postgres |
-| `godoo db create [NAME]` | new database with `base` (NAME defaults to `odoo.db`) |
+| `godoo db create [NAME]` | new database with `base`, plus `web_enterprise` for Enterprise (NAME defaults to `odoo.db`) |
 | | `--demo` (demo data) · `--lang fr_FR` · `-i sale,stock` (more modules) |
 | `godoo db drop NAME [--yes]` | drop a database and its filestore (asks first) |
 | `godoo psql [DB] [-- PSQL_ARGS]` | psql connected to the project's postgres (DB defaults to `odoo.db`) |
@@ -391,7 +454,7 @@ These edit `godoo.yaml`, rebuild what changed and restart Odoo if it runs. See
 | `godoo pkg add NAME... [--local]` | add Python packages (pip-style names); `--local`: never in prod |
 | `godoo pkg remove NAME...` | remove them |
 | `godoo pkg list` | the project's packages, where each comes from, which are local-only |
-| `godoo addons add REPO...` | clone addon repos on the project's Odoo branch and add them to `addons_path` |
+| `godoo addons add REPO...` | clone addon repos and add them to `addons_path`; the branch is detected (`18.0`, `18`, then the default branch) |
 | | REPO: `web` (= OCA/web) · `owner/repo` · a git URL · `--branch B` · `--path DIR` · `--deps` |
 | `godoo addons update [NAME...]` | `git pull --ff-only` the repos (all by default) |
 | `godoo addons remove NAME... [--delete] [--force]` | drop repos from `godoo.yaml` (`--delete` also removes the clone) |
@@ -467,7 +530,7 @@ main sections:
 
 | Section    | Holds |
 |------------|-------|
-| `odoo`     | version, source checkout, local addons dirs, default db, dev mode, workers, extra `odoo.conf` options |
+| `odoo`     | version, edition + enterprise repo, source checkout, local addons dirs, default db, dev mode, workers, extra `odoo.conf` options |
 | `ports`    | one port per service (assigned by `init`) |
 | `postgres` | version, user, password |
 | `nginx`    | listen address (`0.0.0.0` to reach it from your network), server name, upload size |
@@ -488,6 +551,7 @@ shop/
 ├── godoo.yaml          # your settings - the only file you normally edit
 ├── addons/             # your modules
 ├── repos/oca/web/      # addon repos (godoo addons add)
+├── enterprise/         # enterprise addons (edition: enterprise) - never commit
 ├── odoo/               # odoo source checkout (git, --depth 1)
 ├── nix/
 │   ├── flake.nix       # generated from godoo.yaml + env (gitignored)
@@ -500,8 +564,9 @@ shop/
     └── run/            # pid files, nginx temp dirs
 ```
 
-The generated `.gitignore` excludes `.godoo/`, `odoo/`, `repos/` and
-`nix/flake.nix`, because `godoo up` recreates them from `godoo.yaml`.
+The generated `.gitignore` excludes `.godoo/`, `odoo/`, `repos/`,
+`enterprise/` and `nix/flake.nix`, because `godoo up` recreates them from
+`godoo.yaml`. Enterprise in particular must stay out of git.
 `flake.nix` differs between local and prod, so committing it would make a prod
 checkout look modified. Commit `nix/flake.lock`: it pins the exact package
 versions.

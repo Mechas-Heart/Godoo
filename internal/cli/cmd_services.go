@@ -82,7 +82,7 @@ func cmdStatus(ctx context.Context, args []string) error {
 		return err
 	}
 	c := p.Cfg
-	fmt.Printf("%s - Odoo %s - env %s (from %s) - %s\n\n", c.Name, c.Odoo.Version, c.Env, c.EnvSource, p.Root)
+	fmt.Printf("%s - Odoo %s %s - env %s (from %s) - %s\n\n", c.Name, c.Odoo.Version, c.Odoo.Edition, c.Env, c.EnvSource, p.Root)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SERVICE\tSTATE\tPID\tPORT\tLOG")
 	for _, st := range services.Status(p) {

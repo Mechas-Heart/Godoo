@@ -49,7 +49,8 @@ type setupOptions struct {
 //  1. nix/flake.nix rendered from godoo.yaml
 //  2. nix build -> .godoo/env (python with odoo's packages, postgres, nginx, ...)
 //  3. odoo source cloned into odoo.source
-//  4. addon repos from `repos:` cloned into their paths
+//  4. enterprise addons cloned (edition: enterprise)
+//  5. addon repos from `repos:` cloned into their paths
 func setup(ctx context.Context, p *project.Project, o setupOptions) error {
 	if err := p.EnsureDirs(); err != nil {
 		return err
@@ -74,6 +75,12 @@ func setup(ctx context.Context, p *project.Project, o setupOptions) error {
 	ui.Step("odoo source")
 	if err := odoo.EnsureSource(ctx, p); err != nil {
 		return err
+	}
+	if p.Cfg.EnterpriseOn() {
+		ui.Step("enterprise addons")
+		if err := odoo.EnsureEnterprise(ctx, p); err != nil {
+			return err
+		}
 	}
 	if len(p.Cfg.Repos) > 0 {
 		ui.Step("addon repos")
