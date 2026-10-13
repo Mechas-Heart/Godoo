@@ -17,6 +17,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: flake.nix version matches the tag
+        # `nix run github:Mechas-Heart/Godoo/vX.Y.Z` reports flake.nix's version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          grep -q "version = \"$want\";" flake.nix ||
+            { echo "set version = \"$want\"; in flake.nix before tagging $GITHUB_REF_NAME"; exit 1; }
       - run: go test ./...
       - name: build binaries
         run: make dist VERSION="${GITHUB_REF_NAME}"

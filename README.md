@@ -55,19 +55,34 @@ its services: **PostgreSQL, Odoo, nginx and (locally) mailpit**.
 - [Nix](https://nixos.org/download). Flakes do not need to be enabled, because
   godoo passes `--extra-experimental-features "nix-command flakes"` itself.
 
-Install it in one of these three ways:
+Install it in one of these ways:
 
 ```
-# 1. with Go (1.22+)
+# 1. with Nix (you need it anyway): no Go, no download
+nix profile install github:Mechas-Heart/Godoo
+nix run github:Mechas-Heart/Godoo -- init shop --version 18.0   # or just try it
+
+# 2. the install script: the latest prebuilt binary, checksum verified,
+#    into ~/.local/bin (no sudo)
+curl -fsSL https://raw.githubusercontent.com/Mechas-Heart/Godoo/main/install.sh | sh
+
+# 3. with Go (1.22+)
 go install github.com/Mechas-Heart/Godoo/cmd/godoo@latest
 
-# 2. a prebuilt binary (Linux/macOS, amd64/arm64)
-#    https://github.com/Mechas-Heart/Godoo/releases
-
-# 3. from a clone
+# 4. from a clone
 git clone https://github.com/Mechas-Heart/Godoo.git
 cd Godoo && make install    # -> $GOPATH/bin/godoo
 ```
+
+The install script takes two options, as environment variables:
+`GODOO_VERSION=v0.3.0` for a specific release, and
+`GODOO_INSTALL_DIR=/usr/local/bin` for another folder. You can also download
+the archives yourself from the
+[releases](https://github.com/Mechas-Heart/Godoo/releases) (Linux/macOS,
+amd64/arm64, with `checksums.txt`).
+
+To update, run the same command again. With Nix, run
+`nix profile upgrade Godoo` (the name `nix profile list` shows).
 
 ## Quick start
 
@@ -692,6 +707,8 @@ It also drops some variables from your shell:
 
 ```
 cmd/godoo/              main()
+flake.nix               godoo itself as a Nix package (nix run / nix profile install)
+install.sh              the curl | sh installer for release binaries
 internal/cli/           one file per command group (cmd_*.go); root.go = dispatch;
                         pkg_plan.go = where each python package comes from
 internal/config/        godoo.yaml types, defaults, validation, ports, in-place edits
@@ -713,19 +730,36 @@ internal/templates/     *.tmpl for flake.nix, odoo.conf, nginx.conf, godoo.yaml
 make build    # bin/godoo
 make test     # go test ./...
 make dist     # static binaries for linux/darwin, amd64/arm64, in dist/
+
+nix build     # ./result/bin/godoo, built by the flake
+nix develop   # a shell with Go, make and gopls, if Go is not installed
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs on every push and pull request:
 - gofmt, the license-header check, vet, the tests and a build.
+- `nix build` of godoo's own flake, and shellcheck on `install.sh`.
 - For every supported Odoo version, it builds the Nix Python and checks it
   against that branch's real `requirements.txt`.
 
 **Releases** (`.github/workflows/release.yml`): pushing a tag builds the
-static binaries and attaches them to a GitHub release.
+static binaries and attaches them to a GitHub release. `install.sh` always
+fetches from there.
+
+To release, first set the new version in `flake.nix` (`version = "0.3.0";`),
+commit, then tag that commit:
 
 ```
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.3.0 && git push origin v0.3.0
 ```
+
+The release workflow stops if the tag and `flake.nix` disagree.
+
+**When `go.sum` changes** (a new or updated Go dependency), `nix build` fails
+and prints the new hash. Put it in `vendorHash` in `flake.nix`.
+
+**Version numbers.** `make` sets the version from the git tag. The flake uses
+its `version`. `go install ...@vX.Y.Z` and a plain `go build` report the
+version and commit that Go records in the binary.
 
 ## License
 

@@ -26,6 +26,17 @@ jobs:
       - run: go test ./...
       - run: make build
 
+  # godoo's own flake (nix run github:Mechas-Heart/Godoo) and install.sh.
+  # Fails when go.sum changed but vendorHash in flake.nix did not.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build .
+      - run: ./result/bin/godoo version
+      - run: nix run nixpkgs#shellcheck -- install.sh
+
   # Renders nix/flake.nix for each supported Odoo version, builds its python
   # (all from cache.nixos.org) and checks it against that branch's
   # requirements.txt. Catches template bugs and packages nixpkgs lacks.
