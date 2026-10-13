@@ -70,6 +70,10 @@ func (p *Project) DataDir() string  { return p.state("data") }
 func (p *Project) LogDir() string   { return p.state("logs") }
 func (p *Project) RunDir() string   { return p.state("run") }
 
+// LinkedAddonsDir holds symlinks to the modules selected in addons.yaml
+// (doodba: /opt/odoo/auto/addons).
+func (p *Project) LinkedAddonsDir() string { return p.state("addons") }
+
 func (p *Project) SourceDir() string        { return p.Abs(p.Cfg.Odoo.Source) }
 func (p *Project) ConfFile(n string) string { return filepath.Join(p.ConfDir(), n) }
 func (p *Project) LogFile(svc string) string {
@@ -98,15 +102,6 @@ func (p *Project) EnterpriseDir() string {
 		return ""
 	}
 	return p.Abs(p.Cfg.Odoo.Enterprise.Path)
-}
-
-// AllAddonsDirs is every addons directory besides odoo's own: enterprise
-// (if enabled), odoo.addons and repos. Used to scan module dependencies.
-func (p *Project) AllAddonsDirs() []string {
-	if dir := p.EnterpriseDir(); dir != "" {
-		return append([]string{dir}, p.AddonsPaths()...)
-	}
-	return p.AddonsPaths()
 }
 
 // AddonsPaths returns the addons directories as absolute paths: odoo.addons

@@ -153,7 +153,10 @@ func cmdScaffold(ctx context.Context, args []string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	before := len(odoo.AddonsPath(p))
+	before, err := odoo.ResolveAddons(p)
+	if err != nil {
+		return err
+	}
 	if err := runOdoo(ctx, p, "scaffold", pos[0], dir); err != nil {
 		return err
 	}
@@ -161,7 +164,11 @@ func cmdScaffold(ctx context.Context, args []string) error {
 
 	// The first module in a directory adds it to addons_path; a running
 	// server only sees that after a restart.
-	if len(odoo.AddonsPath(p)) != before {
+	after, err := odoo.ResolveAddons(p)
+	if err != nil {
+		return err
+	}
+	if len(after.Path) != len(before.Path) {
 		svc, _ := services.Get(p, "odoo")
 		if _, running := proc.Running(svc.Spec().PidFile); running {
 			ui.Step("restarting odoo to pick up the new addons directory")

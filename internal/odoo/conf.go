@@ -16,18 +16,28 @@ import (
 
 type option struct{ Key, Value string }
 
-// WriteConf renders .godoo/conf/odoo.conf from godoo.yaml.
+// WriteConf renders .godoo/conf/odoo.conf from godoo.yaml. With addons.yaml
+// it also refreshes the selected-modules folder (see ResolveAddons).
 func WriteConf(p *project.Project) error {
-	opts := confOptions(p)
-	_, err := templates.WriteFile("odoo.conf.tmpl", p.ConfFile("odoo.conf"), opts)
+	addons, err := ResolveAddons(p)
+	if err != nil {
+		return err
+	}
+	for _, w := range addons.Warnings {
+		ui.Warn("%s", w)
+	}
+	if err := ApplyLinks(p, addons); err != nil {
+		return err
+	}
+	_, err = templates.WriteFile("odoo.conf.tmpl", p.ConfFile("odoo.conf"), confOptions(p, addons.Path))
 	return err
 }
 
-func confOptions(p *project.Project) []option {
+func confOptions(p *project.Project, addonsPath []string) []option {
 	c := p.Cfg
 	o := c.Odoo
 	opts := []option{
-		{"addons_path", strings.Join(AddonsPath(p), ",")},
+		{"addons_path", strings.Join(addonsPath, ",")},
 		{"data_dir", filepath.Join(p.DataDir(), "odoo")},
 		{"admin_passwd", o.AdminPasswd},
 		{"db_host", "127.0.0.1"},
@@ -83,28 +93,6 @@ func confOptions(p *project.Project) []option {
 	}
 	return opts
 }
-
-// AddonsPath lists the odoo core addons plus every configured addons dir
-// that contains at least one module. Odoo refuses to start when addons_path
-// contains a directory without modules, so empty ones are skipped (with a
-// note) until you add a module to them.
-func AddonsPath(p *project.Project) []string {
-	var paths []string
-	if dir := p.EnterpriseDir(); dir != "" {
-		paths = append(paths, dir) // Odoo's recommended order: enterprise first
-	}
-	paths = append(paths, filepath.Join(p.SourceDir(), "addons"))
-	for _, dir := range p.AddonsPaths() {
-		if hasModules(dir) {
-			paths = append(paths, dir)
-		} else {
-			ui.Debug("addons_path: skipping %s (no modules yet)", dir)
-		}
-	}
-	return paths
-}
-
-func hasModules(dir string) bool { return len(ModulesIn(dir)) > 0 }
 
 func pyBool(b bool) string {
 	if b {

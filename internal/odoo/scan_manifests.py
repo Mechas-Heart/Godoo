@@ -6,7 +6,7 @@ python does not have?
 Reads `external_dependencies["python"]` from every module manifest in the
 given directories (installable modules only).
 
-Usage:  python scan_manifests.py DIR [DIR...]
+Usage:  python scan_manifests.py DIR [DIR...]   (addons or module directories)
 Prints: {"package": ["module", ...], ...} as JSON, missing packages only.
 """
 import ast
@@ -19,15 +19,25 @@ from importlib import metadata
 
 
 def manifests(dirs):
+    """Each argument is an addons directory or a single module directory."""
     for d in dirs:
         if not os.path.isdir(d):
             continue
-        for module in sorted(os.listdir(d)):
-            for filename in ("__manifest__.py", "__openerp__.py"):
-                path = os.path.join(d, module, filename)
-                if os.path.isfile(path):
-                    yield module, path
-                    break
+        for filename in ("__manifest__.py", "__openerp__.py"):
+            if os.path.isfile(os.path.join(d, filename)):  # a module itself
+                yield os.path.basename(os.path.normpath(d)), os.path.join(d, filename)
+                break
+        else:
+            yield from modules_in(d)
+
+
+def modules_in(d):
+    for module in sorted(os.listdir(d)):
+        for filename in ("__manifest__.py", "__openerp__.py"):
+            path = os.path.join(d, module, filename)
+            if os.path.isfile(path):
+                yield module, path
+                break
 
 
 def installed(dep):

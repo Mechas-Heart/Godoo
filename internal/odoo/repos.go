@@ -10,10 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Mechas-Heart/Godoo/internal/config"
 	"github.com/Mechas-Heart/Godoo/internal/project"
+	"github.com/Mechas-Heart/Godoo/internal/selection"
 	"github.com/Mechas-Heart/Godoo/internal/ui"
 )
 
@@ -21,11 +23,38 @@ import (
 // history (so `git pull --ff-only` and `git log` work as usual) but file
 // contents are only downloaded for the checked-out branch.
 
-// EnsureRepos clones every repo from godoo.yaml that is not there yet.
+// AllRepos is godoo.yaml `repos:` plus the repositories only named in
+// addons.yaml, which doodba downloads automatically (from OCA by default).
+func AllRepos(p *project.Project) ([]config.Repo, error) {
+	sel, err := selection.Load(p.Root, p.Cfg.Env)
+	if err != nil || sel == nil {
+		return p.Cfg.Repos, err
+	}
+	implicit, err := sel.ImplicitRepos(p.Cfg)
+	if err != nil {
+		return nil, err
+	}
+	return append(slices.Clone(p.Cfg.Repos), implicit...), nil
+}
+
+// EnsureRepos clones every repo (see AllRepos) that is not there yet. A repo
+// without a branch (only named in addons.yaml) gets one detected.
 func EnsureRepos(ctx context.Context, p *project.Project) error {
-	for _, r := range p.Cfg.Repos {
+	repos, err := AllRepos(p)
+	if err != nil {
+		return err
+	}
+	for _, r := range repos {
 		if _, err := os.Stat(filepath.Join(p.Abs(r.Path), ".git")); err == nil {
 			continue
+		}
+		if r.Branch == "" {
+			b, err := DetectBranch(ctx, p, r.URL, p.Cfg.Odoo.Version)
+			if err != nil {
+				return err
+			}
+			r.Branch = b.Name
+			WarnFallback(b, r.URL, p.Cfg.Odoo.Version)
 		}
 		if err := CloneRepo(ctx, p, r); err != nil {
 			return err
@@ -98,8 +127,16 @@ func UpdateRepo(ctx context.Context, p *project.Project, r config.Repo) error {
 	} else if dirty != "" {
 		return fmt.Errorf("%s has local changes; commit or stash them first", r.Path)
 	}
-	ui.Info("updating %s (%s)", r.Name, r.Branch)
-	_, err := git(ctx, p, dir, "pull", "--ff-only", "origin", r.Branch)
+	branch := r.Branch
+	if branch == "" { // only named in addons.yaml: the branch it was cloned with
+		current, err := CurrentBranch(ctx, p, dir)
+		if err != nil {
+			return err
+		}
+		branch = current
+	}
+	ui.Info("updating %s (%s)", r.Name, branch)
+	_, err := git(ctx, p, dir, "pull", "--ff-only", "origin", branch)
 	return err
 }
 
@@ -123,26 +160,8 @@ func StatusOf(ctx context.Context, p *project.Project, r config.Repo) RepoStatus
 	return RepoStatus{Commit: commit, Modules: len(ModulesIn(dir))}
 }
 
-// ModulesIn lists the module directories (with a manifest) directly in dir.
-func ModulesIn(dir string) []string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var mods []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		for _, manifest := range []string{"__manifest__.py", "__openerp__.py"} {
-			if _, err := os.Stat(filepath.Join(dir, e.Name(), manifest)); err == nil {
-				mods = append(mods, e.Name())
-				break
-			}
-		}
-	}
-	return mods
-}
+// ModulesIn lists the module directories directly in dir (see project.ModulesIn).
+func ModulesIn(dir string) []string { return project.ModulesIn(dir) }
 
 // git runs git from the nix env (falling back to the system git) and
 // returns its trimmed stdout. Progress output goes to the terminal.

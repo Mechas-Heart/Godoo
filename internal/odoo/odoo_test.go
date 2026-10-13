@@ -58,7 +58,11 @@ func TestCommandPutsConfigAfterSubcommand(t *testing.T) {
 
 func TestAddonsPathSkipsEmptyDirs(t *testing.T) {
 	p := testProject(t)
-	got := AddonsPath(p)
+	addons, err := ResolveAddons(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := addons.Path
 	want := []string{filepath.Join(p.SourceDir(), "addons"), filepath.Join(p.Root, "addons")}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v want %v", got, want)
@@ -69,7 +73,7 @@ func TestConfOptionsOverrides(t *testing.T) {
 	p := testProject(t)
 	p.Cfg.Odoo.Options = map[string]string{"workers": "4", "limit_time_real": "600"}
 	opts := map[string]string{}
-	for _, o := range confOptions(p) {
+	for _, o := range confOptions(p, nil) {
 		opts[o.Key] = o.Value
 	}
 	if opts["workers"] != "4" || opts["limit_time_real"] != "600" {
@@ -77,5 +81,40 @@ func TestConfOptionsOverrides(t *testing.T) {
 	}
 	if opts["smtp_port"] != "1025" || opts["gevent_port"] != "20002" || opts["proxy_mode"] != "True" {
 		t.Errorf("unexpected defaults: %v", opts)
+	}
+}
+
+func TestResolveAddonsWithSelection(t *testing.T) {
+	p := testProject(t)
+	// a repo with two modules, of which addons.yaml selects one
+	repo := filepath.Join(p.Root, "repos", "x")
+	for _, m := range []string{"wanted", "unwanted"} {
+		os.MkdirAll(filepath.Join(repo, m), 0o755)
+		os.WriteFile(filepath.Join(repo, m, "__manifest__.py"), []byte("{}"), 0o644)
+	}
+	p.Cfg.Repos = []config.Repo{{Name: "x", URL: "https://example.com/x.git", Branch: "17.0", Path: "./repos/x"}}
+	os.WriteFile(filepath.Join(p.Root, "addons.yaml"), []byte("x:\n  - wanted\n"), 0o644)
+
+	a, err := ResolveAddons(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		filepath.Join(p.Root, "addons"),        // private: no entry, so whole and first
+		p.LinkedAddonsDir(),                    // the selected modules
+		filepath.Join(p.SourceDir(), "addons"), // core odoo last
+	}
+	if !reflect.DeepEqual(a.Path, want) {
+		t.Errorf("path:\n got %v\nwant %v", a.Path, want)
+	}
+	if !a.Selected || len(a.Links) != 1 || a.Links["wanted"] != filepath.Join(repo, "wanted") {
+		t.Errorf("links = %v", a.Links)
+	}
+	if _, err := os.Stat(p.LinkedAddonsDir()); err == nil {
+		t.Error("ResolveAddons must not write the links (ApplyLinks does)")
+	}
+	wantScan := []string{filepath.Join(p.Root, "addons"), filepath.Join(repo, "wanted")}
+	if !reflect.DeepEqual(a.ScanDirs(p), wantScan) {
+		t.Errorf("scan dirs = %v, want %v", a.ScanDirs(p), wantScan)
 	}
 }

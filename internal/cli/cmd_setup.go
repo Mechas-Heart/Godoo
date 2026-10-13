@@ -82,7 +82,11 @@ func setup(ctx context.Context, p *project.Project, o setupOptions) error {
 			return err
 		}
 	}
-	if len(p.Cfg.Repos) > 0 {
+	repos, err := odoo.AllRepos(p)
+	if err != nil {
+		return err
+	}
+	if len(repos) > 0 {
 		ui.Step("addon repos")
 		return odoo.EnsureRepos(ctx, p)
 	}

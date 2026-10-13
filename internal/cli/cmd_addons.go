@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -17,6 +19,7 @@ import (
 	"github.com/Mechas-Heart/Godoo/internal/config"
 	"github.com/Mechas-Heart/Godoo/internal/odoo"
 	"github.com/Mechas-Heart/Godoo/internal/project"
+	"github.com/Mechas-Heart/Godoo/internal/selection"
 	"github.com/Mechas-Heart/Godoo/internal/services"
 	"github.com/Mechas-Heart/Godoo/internal/ui"
 )
@@ -104,6 +107,15 @@ func addonsAdd(ctx context.Context, args []string) error {
 	}
 	if len(added) == 0 {
 		return nil
+	}
+	if sel, err := selection.Load(p.Root, p.Cfg.Env); err != nil {
+		return err
+	} else if sel != nil {
+		for _, r := range added {
+			if !sel.Has(r.Name) {
+				ui.Warn("%s is in use: %s stays inactive until you list it there, e.g.\n  %s:\n    - \"*\"", selection.FileName, r.Name, r.Name)
+			}
+		}
 	}
 
 	// Make sure the env exists, then check the modules' python dependencies.
@@ -246,6 +258,25 @@ func refuseIfInstalled(ctx context.Context, p *project.Project, repos []config.R
 	return nil
 }
 
+// active says how many modules of an addons directory Odoo can see:
+// "all" when the whole directory is on addons_path, "N" when addons.yaml
+// selects N of its modules, "none" otherwise.
+func active(p *project.Project, addons odoo.Addons, dir string) string {
+	if slices.Contains(addons.Path, dir) {
+		return "all"
+	}
+	n := 0
+	for _, m := range odoo.ModulesIn(dir) {
+		if addons.Links[m] == filepath.Join(dir, m) {
+			n++
+		}
+	}
+	if n == 0 {
+		return "none"
+	}
+	return fmt.Sprint(n)
+}
+
 // matchesAny reports whether a `repos:` yaml entry is one of targets. Entries
 // may omit name, so compare the name derived the same way config does.
 func matchesAny(entry *yaml.Node, targets []config.Repo) bool {
@@ -275,15 +306,19 @@ func addonsUpdate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	repos := p.Cfg.Repos
+	all, err := odoo.AllRepos(p)
+	if err != nil {
+		return err
+	}
+	repos := all
 	if len(names) > 0 {
 		repos = nil
 		for _, n := range names {
-			r, ok := p.Cfg.FindRepo(n)
-			if !ok {
-				return fmt.Errorf("%q is not in repos (see `godoo addons list`)", n)
+			i := slices.IndexFunc(all, func(r config.Repo) bool { return strings.EqualFold(r.Name, n) })
+			if i < 0 {
+				return fmt.Errorf("%q is not in repos or addons.yaml (see `godoo addons list`)", n)
 			}
-			repos = append(repos, r)
+			repos = append(repos, all[i])
 		}
 	}
 	if len(repos) == 0 {
@@ -315,16 +350,40 @@ func addonsList(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	addons, err := odoo.ResolveAddons(p)
+	if err != nil {
+		return err
+	}
+	repos, err := odoo.AllRepos(p)
+	if err != nil {
+		return err
+	}
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tBRANCH\tCOMMIT\tMODULES\tPATH")
+	fmt.Fprintln(w, "NAME\tBRANCH\tCOMMIT\tMODULES\tACTIVE\tPATH")
 	for _, dir := range p.Cfg.Odoo.Addons {
-		fmt.Fprintf(w, "(local)\t-\t-\t%d\t%s\n", len(odoo.ModulesIn(p.Abs(dir))), dir)
+		abs := p.Abs(dir)
+		fmt.Fprintf(w, "(local)\t-\t-\t%d\t%s\t%s\n", len(odoo.ModulesIn(abs)), active(p, addons, abs), dir)
 	}
-	for _, r := range p.Cfg.Repos {
+	if dir := p.EnterpriseDir(); dir != "" {
+		st := odoo.StatusOf(ctx, p, p.Cfg.EnterpriseRepo())
+		fmt.Fprintf(w, "(enterprise)\t%s\t%s\t%d\t%s\t%s\n", p.Cfg.Odoo.Enterprise.Branch, st.Commit, st.Modules, active(p, addons, dir), p.Cfg.Odoo.Enterprise.Path)
+	}
+	for _, r := range repos {
 		st := odoo.StatusOf(ctx, p, r)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", r.Name, r.Branch, st.Commit, st.Modules, r.Path)
+		name := r.Name
+		if _, inYaml := p.Cfg.FindRepo(r.Name); !inYaml {
+			name += " (addons.yaml)"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n", name, valueOr(r.Branch, "-"), st.Commit, st.Modules, active(p, addons, p.Abs(r.Path)), r.Path)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	if addons.Selected {
+		fmt.Printf("\nModule selection: %s (%d modules active, linked into .godoo/addons on `godoo up`)\n", selection.FileName, len(addons.Links))
+	}
+	return nil
 }
 
 func addonsDeps(ctx context.Context, args []string) error {
@@ -340,7 +399,11 @@ func addonsDeps(ctx context.Context, args []string) error {
 	if err := setup(ctx, p, setupOptions{}); err != nil {
 		return err
 	}
-	if err := handleMissingDeps(ctx, p, p.AllAddonsDirs(), *add); err != nil {
+	addons, err := odoo.ResolveAddons(p)
+	if err != nil {
+		return err
+	}
+	if err := handleMissingDeps(ctx, p, addons.ScanDirs(p), *add); err != nil {
 		return err
 	}
 	if *add {

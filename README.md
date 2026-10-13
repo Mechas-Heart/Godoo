@@ -34,6 +34,7 @@ its services: **PostgreSQL, Odoo, nginx and (locally) mailpit**.
 - [Quick start](#quick-start)
 - [The services](#the-services)
 - [Local vs prod](#local-vs-prod)
+- [Selecting modules: addons.yaml](#selecting-modules-addonsyaml)
 - [Community or Enterprise](#community-or-enterprise)
 - [Python packages and addon repos](#python-packages-and-addon-repos)
 - [Several Odoo versions side by side](#several-odoo-versions-side-by-side)
@@ -278,6 +279,61 @@ repos:
     path: ./repos/oca/web
 ```
 
+## Selecting modules: addons.yaml
+
+By default, every module of every addon repo is available (on `addons_path`).
+To pick only some, add an `addons.yaml` next to `godoo.yaml`. It uses the same
+format as [doodba](https://github.com/Tecnativa/doodba#optodoocustomsrcaddonsyaml),
+so an existing doodba `addons.yaml` works as is:
+
+```yaml
+web:
+  - web_responsive
+  - "web_refresh*"        # wildcards: *, ?, [abc]
+server-ux:                # not in godoo.yaml: downloaded from OCA automatically
+  - date_range
+---
+ONLY:                     # this document only in local projects
+  GODOO_ENV: [local]
+web:
+  - web_environment_ribbon
+---
+ENV:                      # repos below come from another place / branch
+  DEFAULT_REPO_PATTERN: https://github.com/acme/{}.git
+  ODOO_VERSION: "18.0"
+acme-addons:
+  - "*"
+```
+
+How it works, as in doodba:
+
+- **Selected modules are symlinked** into `.godoo/addons/`, and that folder goes
+  on `addons_path` instead of the whole repos. The symlinks are refreshed on
+  every `godoo up`, `restart` and module command.
+- **Repos without an entry are inactive.** `godoo up` warns about each one.
+  `name: ["*"]` activates all of a repo's modules.
+- **Your own addons stay available.** `odoo.addons` in `godoo.yaml` (doodba's
+  `private`) stays available as a whole, as do the enterprise addons, unless
+  `private:` / `enterprise:` entries select from them.
+- **Core Odoo is always available.** A module selected from a repo wins over a
+  core module with the same name, as in doodba.
+- **Repos named only in `addons.yaml` are downloaded** from
+  `DEFAULT_REPO_PATTERN` (default `https://github.com/OCA/{}.git`). Their branch
+  is `ODOO_VERSION` from `ENV`, or detected like for `godoo addons add`.
+- **`ONLY:`** enables a document only when every listed environment variable
+  has one of the listed values. `GODOO_ENV` is the project's env (`local` or
+  `prod`), even when the variable is not set in your shell.
+- **Several documents** (separated by `---`) are merged.
+
+Two differences from doodba, both to make mistakes visible:
+- A pattern that matches no module gives a warning (doodba fails silently).
+- A module name found in two repos gives a warning and uses the first repo
+  (doodba picks one at random).
+
+`godoo addons list` shows how many modules of each repo are active, and
+`godoo addons deps` / `godoo doctor` check only the selected modules. Delete
+`addons.yaml` to go back to whole repos.
+
 ## Community or Enterprise
 
 Projects run Odoo Community by default. Enterprise is Community plus the
@@ -458,7 +514,7 @@ These edit `godoo.yaml`, rebuild what changed and restart Odoo if it runs. See
 | | REPO: `web` (= OCA/web) · `owner/repo` · a git URL · `--branch B` · `--path DIR` · `--deps` |
 | `godoo addons update [NAME...]` | `git pull --ff-only` the repos (all by default) |
 | `godoo addons remove NAME... [--delete] [--force]` | drop repos from `godoo.yaml` (`--delete` also removes the clone) |
-| `godoo addons list` | repos with branch, commit and module count |
+| `godoo addons list` | repos with branch, commit, module count and how many are active ([addons.yaml](#selecting-modules-addonsyaml)) |
 | `godoo addons deps [--add]` | Python packages the addons' manifests need but are missing |
 
 ### Environment
@@ -549,6 +605,7 @@ keeps its old settings until you restart it with `godoo restart <service>`.
 ```
 shop/
 ├── godoo.yaml          # your settings - the only file you normally edit
+├── addons.yaml         # optional: which modules of which repos (doodba format)
 ├── addons/             # your modules
 ├── repos/oca/web/      # addon repos (godoo addons add)
 ├── enterprise/         # enterprise addons (edition: enterprise) - never commit
@@ -558,6 +615,7 @@ shop/
 │   └── flake.lock      # exact nixpkgs revisions - commit this
 └── .godoo/             # generated state; `godoo destroy` deletes it
     ├── env -> /nix/store/...-godoo-shop-env   python + packages, postgres, nginx, ...
+    ├── addons/         # symlinks to the modules selected in addons.yaml
     ├── conf/           # odoo.conf, nginx.conf (regenerated on every start)
     ├── data/           # postgres cluster, odoo filestore, mailpit.db
     ├── logs/           # one log per service
@@ -641,7 +699,8 @@ internal/versions/      per-Odoo-version knowledge (nixpkgs pin, packages, flags
 internal/project/       paths inside a project + the process environment
 internal/nix/           flake rendering, nix build/eval, python package lookup
 internal/pypi/          pure-python wheels from PyPI for what nixpkgs lacks
-internal/odoo/          odoo + repo clones, odoo.conf, odoo-bin argv, dependency checks
+internal/odoo/          odoo + repo clones, addons_path, odoo.conf, odoo-bin argv, dependency checks
+internal/selection/     addons.yaml (doodba format): which modules of which repos
 internal/services/      postgres.go, mailpit.go, odoo.go, nginx.go + manager.go
 internal/proc/          start/stop/wait for background processes
 internal/registry/      the list of projects on this machine
