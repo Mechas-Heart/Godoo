@@ -12,13 +12,74 @@
 #
 # Steps: work out the OS and CPU, download the matching archive and
 # checksums.txt, check the SHA-256, copy the binary into the install dir.
+#
+# To remove godoo again (your projects and their databases are kept):
+#
+#   curl -fsSL https://raw.githubusercontent.com/Mechas-Heart/Godoo/main/install.sh | sh -s -- --uninstall
 set -eu
 
 REPO="Mechas-Heart/Godoo"
 INSTALL_DIR="${GODOO_INSTALL_DIR:-$HOME/.local/bin}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/godoo"
 
 say() { printf '%s\n' "godoo-install: $*"; }
 fail() { say "error: $*" >&2; exit 1; }
+
+# uninstall stops every project's services, removes the binary, and removes
+# godoo's project list unless projects still exist. Projects are not touched.
+uninstall() {
+	bin="$INSTALL_DIR/godoo"
+	[ -f "$bin" ] || bin=$(command -v godoo 2>/dev/null || true)
+	[ -n "$bin" ] || fail "godoo is not installed (not in $INSTALL_DIR, not on PATH)"
+	case "$(readlink -f "$bin" 2>/dev/null || echo "$bin")" in
+		/nix/store/*) fail "$bin was installed with Nix: run \`nix profile remove Godoo\` instead" ;;
+	esac
+
+	# Nothing should keep running once godoo is gone.
+	if "$bin" down --help 2>&1 | grep -q -- '-all'; then
+		"$bin" down --all ||
+			fail "could not stop all projects; run \`godoo down\` in the running ones, then uninstall again"
+	elif "$bin" list 2>/dev/null | grep -q ' running '; then
+		# godoo v0.3.0 and older have no `down --all`
+		"$bin" list
+		fail "projects are running; run \`godoo down\` in each, then uninstall again"
+	fi
+
+	rm -f "$bin"
+	say "removed $bin"
+
+	# Project folders from the list that still exist.
+	left=""
+	if [ -f "$STATE_DIR/instances.json" ]; then
+		paths=$(sed -n 's/^ *"path": *"\(.*\)",\{0,1\}$/\1/p' "$STATE_DIR/instances.json")
+		while IFS= read -r dir; do
+			if [ -n "$dir" ] && [ -d "$dir" ]; then
+				left="$left  $dir
+"
+			fi
+		done <<EOF
+$paths
+EOF
+	fi
+	if [ -n "$left" ]; then
+		say "kept $STATE_DIR (the project list, for a reinstall). These projects still exist:"
+		printf '%s' "$left"
+		say "each keeps its code, databases and Nix environment in <project>/.godoo."
+		say "to delete those: rm -rf <project>/.godoo (or \`godoo destroy\` before uninstalling),"
+		say "then free the Nix store with: nix store gc"
+	else
+		rm -rf "$STATE_DIR"
+		say "removed $STATE_DIR"
+		say "to free the Nix store space godoo used: nix store gc"
+	fi
+	exit 0
+}
+
+case "${1:-}" in
+	"") ;;
+	--uninstall) uninstall ;;
+	*) fail "unknown option $1 (the only option is --uninstall)" ;;
+esac
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Mechas-Heart/Godoo/internal/odoo"
 	"github.com/Mechas-Heart/Godoo/internal/project"
+	"github.com/Mechas-Heart/Godoo/internal/registry"
 	"github.com/Mechas-Heart/Godoo/internal/services"
 	"github.com/Mechas-Heart/Godoo/internal/ui"
 )
@@ -39,8 +40,13 @@ func cmdUp(ctx context.Context, args []string) error {
 }
 
 func cmdDown(ctx context.Context, args []string) error {
-	if _, _, err := parse(newFlags("down"), args); err != nil {
+	fs := newFlags("down")
+	all := fs.Bool("all", false, "stop the services of every project on this machine (godoo list)")
+	if _, _, err := parse(fs, args); err != nil {
 		return err
+	}
+	if *all {
+		return downAll()
 	}
 	p, err := openProject()
 	if err != nil {
@@ -48,6 +54,31 @@ func cmdDown(ctx context.Context, args []string) error {
 	}
 	ui.Step("stopping services")
 	return services.Down(p)
+}
+
+// downAll stops every registered project that has something running.
+// Used by `install.sh --uninstall`, so nothing keeps running without godoo.
+func downAll() error {
+	entries, err := registry.All()
+	if err != nil {
+		return err
+	}
+	var failed []string
+	for _, e := range entries {
+		p, err := project.Open(e.Path)
+		if err != nil || !services.AnyRunning(p) {
+			continue // missing project, or nothing to stop
+		}
+		ui.Step("stopping %s (%s)", e.Name, e.Path)
+		if err := services.Down(p); err != nil {
+			ui.Warn("%s: %v", e.Name, err)
+			failed = append(failed, e.Name)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("could not stop: %s", strings.Join(failed, ", "))
+	}
+	return nil
 }
 
 func cmdRestart(ctx context.Context, args []string) error {

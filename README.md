@@ -84,6 +84,26 @@ amd64/arm64, with `checksums.txt`).
 To update, run the same command again. With Nix, run
 `nix profile upgrade Godoo` (the name `nix profile list` shows).
 
+### Uninstall
+
+```
+# installed with the script (or by copying the binary)
+curl -fsSL https://raw.githubusercontent.com/Mechas-Heart/Godoo/main/install.sh | sh -s -- --uninstall
+
+# installed with Nix
+godoo down --all && nix profile remove Godoo
+```
+
+The script stops the services of every project first (`godoo down --all`),
+then removes the binary. It also removes godoo's project list
+(`~/.local/state/godoo`), unless some projects still exist: then the list is
+kept so a reinstall still knows them.
+
+**Your projects are never touched.** Each one keeps its code, databases and
+Nix environment in its own folder. To delete a project's data, run
+`godoo destroy` in it before uninstalling (or `rm -rf <project>/.godoo`
+after). Then `nix store gc` frees the Nix store space godoo used.
+
 ## Quick start
 
 ```
@@ -482,7 +502,7 @@ godoo [-v] [-C DIR] <command> [arguments] [flags] [-- passthrough]
 | Command | What it does |
 |---|---|
 | `godoo up` | build what is missing, then start postgres, mailpit, odoo, nginx |
-| `godoo down` | stop all services; data is kept |
+| `godoo down [--all]` | stop all services; data is kept (`--all`: of every project on this machine) |
 | `godoo status` | state, pid, port and log file of each service |
 | `godoo restart [SERVICE]` | restart one service: `odoo` (default), `postgres`, `nginx`, `mailpit` |
 | `godoo logs [SERVICE\|all] [-f] [-n 100]` | show a log (default `odoo`); `-f` follows it |

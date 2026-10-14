@@ -33,7 +33,7 @@ func commands() []command {
 		{"init", "[dir] [--version 17.0] [--name N] [--env local|prod] [--source PATH]", "create a new project", cmdInit},
 		{"setup", "", "build the nix env (python, postgres, nginx, ...) and clone odoo", cmdSetup},
 		{"up", "", "start postgres, mailpit, odoo and nginx in the background", cmdUp},
-		{"down", "", "stop all services", cmdDown},
+		{"down", "[--all]", "stop all services (--all: of every project)", cmdDown},
 		{"restart", "[service]", "restart one service (default: odoo)", cmdRestart},
 		{"status", "", "show services, pids and ports", cmdStatus},
 		{"logs", "[service|all] [-f] [-n 100]", "show service logs (default: odoo)", cmdLogs},
