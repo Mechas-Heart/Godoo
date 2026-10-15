@@ -254,9 +254,11 @@ godoo pkg add --local pytest-odoo    # local only, never in prod
 godoo pkg remove pandas
 godoo pkg list                       # what you have, and what is local-only
 
-godoo addons add web server-tools    # = OCA/web, OCA/server-tools, on this project's Odoo branch
-godoo addons add acme/addons --branch main
-godoo addons add https://gitlab.com/acme/tools.git
+godoo addons add web server-tools    # register OCA/web, OCA/server-tools: nothing downloaded yet
+godoo addons add web --modules web_responsive   # download and use only this module
+godoo addons add server-tools --all  # or all of a repo
+godoo addons add acme/addons --branch main --all
+godoo addons add https://gitlab.com/acme/tools.git --modules tool_a,tool_b
 godoo addons deps --add              # add the python deps that addon manifests declare
 godoo addons update                  # git pull --ff-only every repo
 godoo addons remove web --delete
@@ -277,8 +279,9 @@ godoo addons list
 4. Anything else is reported instead of added. A compiled package without a
    pure wheel needs a small Nix derivation.
 
-**Addon repos** are cloned into `./repos/<owner>/<name>` and added to
-`addons_path`.
+**Addon repos** are registered first and downloaded only for the modules
+you pick (see [`godoo addons` or `addons.yaml`?](#godoo-addons-or-addonsyaml)).
+They go into `./repos/<owner>/<name>`.
 
 - **The branch is detected.** Repositories name their branches differently,
   so without `--branch` godoo asks the remote which branches exist and picks,
@@ -288,13 +291,16 @@ godoo addons list
   3. the repository's default branch, e.g. `main`, with a warning, because it
      may not support this Odoo version
 
-  The chosen branch is written to `godoo.yaml`.
+  The chosen branch is written to `godoo.yaml`. Detecting or checking a
+  branch only asks the remote (`git ls-remote`), so a wrong URL or branch is
+  refused before anything is written, and nothing is downloaded.
 
-- When you add a repo, godoo reads each module's `external_dependencies` and
-  lists the Python packages that are missing. Pass `--deps` to add them
+- When modules are downloaded, godoo reads each one's `external_dependencies`
+  and lists the Python packages that are missing. Pass `--deps` to add them
   straight away.
 - `addons remove` refuses while modules from that repo are installed in the
-  default database. Pass `--force` to override.
+  default database, and `--delete` refuses when the clone has local changes,
+  unpushed commits or stashes. Pass `--force` to override.
 - Repos are cloned with `--filter=blob:none`. That keeps the full history, so
   `git log` and `git pull` work, but only downloads file contents for the
   checked-out branch. With `addons.yaml`, only the selected modules are
@@ -322,36 +328,40 @@ repos:
 
 ### `godoo addons` or `addons.yaml`?
 
-You can use either one, or both together. They answer different questions:
+They work together. `godoo.yaml` says **which repos** (URL, branch, folder).
+`addons.yaml` says **which modules** of them are used, and only those are
+downloaded. `godoo addons add` writes both, so you don't have to edit
+`addons.yaml` by hand:
 
-| | Answers | Written to |
-|---|---|---|
-| `godoo addons add` | **which repos**: URL, branch, folder | `godoo.yaml` → `repos:` |
-| `addons.yaml` | **which modules** of which repos | `addons.yaml` |
+```
+godoo addons add web server-tools                    # register: nothing downloaded
+godoo addons add web --modules web_responsive        # download and use only this module
+godoo addons add web --modules "web_refresh*"        # more later (wildcards work)
+godoo addons add server-tools --all                  # all of a repo
+godoo addons add git@github.com:acme/my-addons.git --branch main --modules my_module
+godoo addons remove web                              # from godoo.yaml and addons.yaml
+```
 
-1. **Only `godoo addons add`.** Each repo is downloaded whole and all its
-   modules are available. This is the simplest way.
-2. **Only `addons.yaml`** (doodba style). Name OCA repos and the modules you
-   want. godoo downloads the repos itself, with only those modules, so you
-   never run `addons add`.
-3. **Both.** Use `godoo addons add` for repos that are not on OCA or need a
-   specific URL, branch or folder, such as your own or private repos. Then
-   pick their modules in `addons.yaml`:
+- **Without `--modules` or `--all`, nothing is downloaded.** The repo is only
+  registered: it goes into `godoo.yaml`, and into `addons.yaml` as `web: []`.
+  godoo checks the URL and branch with `git ls-remote`, which downloads
+  nothing.
+- **`--modules a,b`** downloads and uses only those modules. Run it again to
+  add more. `--modules` takes one repo at a time.
+- **`--all`** downloads and uses the whole repo (`web: ["*"]`). It works with
+  several repos at once.
+- **The first `godoo addons add` creates `addons.yaml`.** Repos you already
+  had are listed there with `"*"`, so nothing that worked before turns off.
+- **Downloading happens in `godoo up`**, which `godoo addons add` runs for
+  you. A repo with no modules selected is never downloaded. `godoo addons
+  list` shows it as "not downloaded".
+- **Doodba style:** you can also name OCA repos only in `addons.yaml`, without
+  `addons add`. godoo downloads their selected modules itself. `godoo addons
+  add NAME` later moves such a repo into `godoo.yaml` without downloading it
+  again.
 
-   ```
-   godoo addons add git@github.com:acme/my-addons.git --branch main
-   ```
-   ```yaml
-   my-addons:          # added with `godoo addons add`
-     - my_module
-   web:                # OCA: no `addons add` needed
-     - web_responsive
-   ```
-
-Once `addons.yaml` exists, **a repo without an entry in it is inactive**, even
-one added with `godoo addons add`. godoo warns about it, and `name: ["*"]`
-makes all of its modules available. `godoo addons list`, `godoo addons update`
-and `godoo up` work for both kinds of repo.
+Projects without `addons.yaml` (made before this, or with repos added by
+hand to `godoo.yaml`) keep using every repo whole.
 
 ### The addons.yaml format
 
@@ -391,8 +401,9 @@ How it works, as in doodba:
   repo's top-level files, not all 40 modules. Change `addons.yaml` and the
   next `godoo up` (or `setup`) adds or removes folders to match. `"*"`, or no
   entry, checks out the whole repo again.
-- **Repos without an entry are inactive.** `godoo up` warns about each one.
-  `name: ["*"]` activates all of a repo's modules.
+- **Repos without an entry, or with an empty one (`name: []`), are inactive
+  and not downloaded.** `godoo up` warns about a missing entry. `name: ["*"]`
+  activates all of a repo's modules.
 - **Your own addons stay available.** `odoo.addons` in `godoo.yaml` (doodba's
   `private`) stays available as a whole, as do the enterprise addons, unless
   `private:` / `enterprise:` entries select from them.
@@ -601,10 +612,10 @@ These edit `godoo.yaml`, rebuild what changed and restart Odoo if it runs. See
 | `godoo pkg add NAME... [--local]` | add Python packages (pip-style names); `--local`: never in prod |
 | `godoo pkg remove NAME...` | remove them |
 | `godoo pkg list` | the project's packages, where each comes from, which are local-only |
-| `godoo addons add REPO...` | clone addon repos and add them to `addons_path`; the branch is detected (`18.0`, `18`, then the default branch) |
-| | REPO: `web` (= OCA/web) · `owner/repo` · a git URL · `--branch B` · `--path DIR` · `--deps` |
+| `godoo addons add REPO...` | register addon repos (nothing downloaded); the branch is detected (`18.0`, `18`, then the default branch) ([details](#godoo-addons-or-addonsyaml)) |
+| | `--modules a,b`: download and use only these · `--all`: the whole repo · REPO: `web` (= OCA/web) · `owner/repo` · a git URL · `--branch B` · `--path DIR` · `--deps` |
 | `godoo addons update [NAME...]` | `git pull --ff-only` the repos (all by default) |
-| `godoo addons remove NAME... [--delete] [--force]` | drop repos from `godoo.yaml` (`--delete` also removes the clone) |
+| `godoo addons remove NAME... [--delete] [--force]` | drop repos from `godoo.yaml` and `addons.yaml` (`--delete` also removes the clone, unless it has local changes, unpushed commits or stashes) |
 | `godoo addons list` | repos with branch, commit, module count and how many are active ([addons.yaml](#selecting-modules-addonsyaml)) |
 | `godoo addons deps [--add]` | Python packages the addons' manifests need but are missing |
 

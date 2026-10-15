@@ -30,6 +30,14 @@ import (
 // entry there, or when its entry has "*". Changing addons.yaml changes the
 // checkout on the next `godoo up` / `godoo setup` (see SyncRepoCheckout).
 
+// Wanted reports whether r should be downloaded at all: always without
+// addons.yaml (the whole repo is used), otherwise only when its entry
+// selects something. `godoo addons add` without --modules registers a repo
+// with an empty entry, so nothing is downloaded until modules are picked.
+func Wanted(sel *selection.Selection, r config.Repo) bool {
+	return sel == nil || len(sel.Patterns[r.Name]) > 0
+}
+
 // partial reports whether addons.yaml selects only some modules of r.
 func partial(sel *selection.Selection, r config.Repo) bool {
 	if sel == nil {
@@ -143,9 +151,12 @@ func setSparse(ctx context.Context, p *project.Project, sel *selection.Selection
 			return nil // already right
 		}
 	}
-	if len(mods) == 0 {
+	switch {
+	case len(sel.Patterns[r.Name]) == 0:
+		ui.Info("%s: %s selects none of its modules, checking out none", r.Name, selection.FileName)
+	case len(mods) == 0:
 		ui.Info("%s: no module matches %s, checking out none", r.Name, selection.FileName)
-	} else {
+	default:
 		ui.Info("%s: checking out only %s", r.Name, strings.Join(mods, ", "))
 	}
 	_, err = git(ctx, p, dir, append([]string{"sparse-checkout", "set", "--cone"}, mods...)...)
@@ -161,7 +172,7 @@ func setSparse(ctx context.Context, p *project.Project, sel *selection.Selection
 // (no network, no access), so a failure never leaves the repo missing.
 func reclone(ctx context.Context, p *project.Project, sel *selection.Selection, r config.Repo) (bool, error) {
 	dir := p.Abs(r.Path)
-	if why := localWork(ctx, p, dir); why != "" {
+	if why := LocalWork(ctx, p, dir); why != "" {
 		ui.Info("%s: keeping the full clone (%s); delete %s and run `godoo up` for the smaller download", r.Name, why, r.Path)
 		return false, nil
 	}
@@ -189,9 +200,9 @@ func reclone(ctx context.Context, p *project.Project, sel *selection.Selection, 
 	return true, os.RemoveAll(old)
 }
 
-// localWork says why a repo must not be deleted: local changes, commits not
+// LocalWork says why a repo must not be deleted: local changes, commits not
 // pushed, or stashes. "" means a fresh clone loses nothing.
-func localWork(ctx context.Context, p *project.Project, dir string) string {
+func LocalWork(ctx context.Context, p *project.Project, dir string) string {
 	if out, err := git(ctx, p, dir, "status", "--porcelain"); err != nil || out != "" {
 		return "it has local changes"
 	}

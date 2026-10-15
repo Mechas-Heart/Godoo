@@ -42,6 +42,19 @@ func DetectBranch(ctx context.Context, p *project.Project, url, version string) 
 	return Branch{Name: name, Fallback: fallback}, nil
 }
 
+// CheckBranch makes sure url is reachable and has branch (git ls-remote, no
+// download), so a typo in a URL or --branch never ends up in godoo.yaml.
+func CheckBranch(ctx context.Context, p *project.Project, url, branch string) error {
+	out, err := git(ctx, p, "", "ls-remote", "--heads", url, "refs/heads/"+branch)
+	if err != nil {
+		return fmt.Errorf("cannot reach %s (check the URL and your access): %w", url, err)
+	}
+	if strings.TrimSpace(out) == "" {
+		return fmt.Errorf("%s has no branch %q", url, branch)
+	}
+	return nil
+}
+
 // branchCandidates lists the version branch names to look for, in order.
 func branchCandidates(version string) []string {
 	candidates := []string{version} // "18.0"

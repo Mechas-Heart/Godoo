@@ -38,9 +38,10 @@ func AllRepos(p *project.Project) ([]config.Repo, error) {
 	return append(slices.Clone(p.Cfg.Repos), implicit...), nil
 }
 
-// EnsureRepos clones every repo (see AllRepos) that is not there yet, and
-// makes the checkout of the others match addons.yaml (see sparse.go). A repo
-// without a branch (only named in addons.yaml) gets one detected.
+// EnsureRepos clones every repo (see AllRepos) that is not there yet and
+// has modules selected (see Wanted), and makes the checkout of the others
+// match addons.yaml (see sparse.go). A repo without a branch (only named in
+// addons.yaml) gets one detected.
 func EnsureRepos(ctx context.Context, p *project.Project) error {
 	repos, err := AllRepos(p)
 	if err != nil {
@@ -55,6 +56,10 @@ func EnsureRepos(ctx context.Context, p *project.Project) error {
 			if err := SyncRepoCheckout(ctx, p, sel, r); err != nil {
 				return err
 			}
+			continue
+		}
+		if !Wanted(sel, r) {
+			ui.Debug("%s: not downloaded, %s selects none of its modules", r.Name, selection.FileName)
 			continue
 		}
 		if r.Branch == "" {
@@ -154,6 +159,9 @@ func CurrentBranch(ctx context.Context, p *project.Project, dir string) (string,
 	return git(ctx, p, dir, "rev-parse", "--abbrev-ref", "HEAD")
 }
 
+// NotCloned is RepoStatus.Commit for a repo that is not on disk.
+const NotCloned = "not cloned (run godoo setup)"
+
 // RepoStatus is a one-line summary for `godoo addons list`.
 type RepoStatus struct {
 	Commit  string // short hash and date, or "not cloned"
@@ -173,11 +181,11 @@ func StatusOf(ctx context.Context, p *project.Project, r config.Repo) RepoStatus
 	dir := p.Abs(r.Path)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		// not cloned yet: don't let git print "fatal: cannot change to ..."
-		return RepoStatus{Commit: "not cloned (run godoo setup)"}
+		return RepoStatus{Commit: NotCloned}
 	}
 	commit, err := git(ctx, p, dir, "log", "-1", "--format=%h %cs")
 	if err != nil {
-		return RepoStatus{Commit: "not cloned (run godoo setup)"}
+		return RepoStatus{Commit: NotCloned}
 	}
 	st := RepoStatus{Commit: commit, Modules: len(ModulesIn(dir))}
 	if sparse, _ := git(ctx, p, dir, "config", "--get", "core.sparseCheckout"); sparse == "true" {

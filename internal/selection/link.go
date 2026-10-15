@@ -54,7 +54,8 @@ func MakePlan(s *Selection, sources []Source) Plan {
 				pl.Direct = append(pl.Direct, src)
 			} else {
 				pl.Warnings = append(pl.Warnings, fmt.Sprintf(
-					"repo %q has no entry in %s, so none of its modules are available (add `%s: [\"*\"]` for all)",
+					"repo %q has no entry in %s, so none of its modules are available "+
+						"(`godoo addons add %s` for all of them, or with --modules a,b for some)",
 					src.Name, FileName, src.Name))
 			}
 			continue

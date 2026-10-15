@@ -233,3 +233,26 @@ func TestFullCloneIsReplacedWhenSafe(t *testing.T) {
 		}
 	})
 }
+
+func TestWanted(t *testing.T) {
+	r := config.Repo{Name: "web"}
+	if !Wanted(nil, r) {
+		t.Error("no addons.yaml: every repo is downloaded whole")
+	}
+	for yaml, want := range map[string]bool{
+		"web: []\n":                  false, // registered by `addons add`, nothing picked
+		"other:\n  - x\n":            false, // no entry
+		"web:\n  - web_responsive\n": true,
+		"web: [\"*\"]\n":             true,
+	} {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, selection.FileName), []byte(yaml), 0o644)
+		sel, err := selection.Load(dir, "local")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := Wanted(sel, r); got != want {
+			t.Errorf("%q: Wanted = %v, want %v", yaml, got, want)
+		}
+	}
+}
