@@ -115,6 +115,12 @@ func Apply(dir string, pl Plan) error {
 	return nil
 }
 
+// Matches reports whether module matches one of patterns.
+func Matches(patterns []string, module string) bool {
+	_, ok := firstMatch(patterns, module)
+	return ok
+}
+
 // firstMatch returns the first pattern matching module. Patterns use shell
 // wildcards (*, ?, [abc]) like doodba's Python glob.
 func firstMatch(patterns []string, module string) (string, bool) {

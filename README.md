@@ -81,8 +81,11 @@ the archives yourself from the
 [releases](https://github.com/Mechas-Heart/Godoo/releases) (Linux/macOS,
 amd64/arm64, with `checksums.txt`).
 
-To update, run the same command again. With Nix, run
-`nix profile upgrade Godoo` (the name `nix profile list` shows).
+To update, run the same command again. The install script replaces the godoo
+already in the install folder and says which version it replaced. It also
+warns when another godoo earlier on your PATH (for example from `go install`)
+would still run instead. With Nix, run `nix profile upgrade Godoo` (the name
+`nix profile list` shows).
 
 ### Uninstall
 
@@ -294,7 +297,8 @@ godoo addons list
   default database. Pass `--force` to override.
 - Repos are cloned with `--filter=blob:none`. That keeps the full history, so
   `git log` and `git pull` work, but only downloads file contents for the
-  checked-out branch.
+  checked-out branch. With `addons.yaml`, only the selected modules are
+  downloaded (see [Selecting modules](#selecting-modules-addonsyaml)).
 
 The resulting `godoo.yaml` looks like this:
 
@@ -315,6 +319,41 @@ repos:
 ```
 
 ## Selecting modules: addons.yaml
+
+### `godoo addons` or `addons.yaml`?
+
+You can use either one, or both together. They answer different questions:
+
+| | Answers | Written to |
+|---|---|---|
+| `godoo addons add` | **which repos**: URL, branch, folder | `godoo.yaml` → `repos:` |
+| `addons.yaml` | **which modules** of which repos | `addons.yaml` |
+
+1. **Only `godoo addons add`.** Each repo is downloaded whole and all its
+   modules are available. This is the simplest way.
+2. **Only `addons.yaml`** (doodba style). Name OCA repos and the modules you
+   want. godoo downloads the repos itself, with only those modules, so you
+   never run `addons add`.
+3. **Both.** Use `godoo addons add` for repos that are not on OCA or need a
+   specific URL, branch or folder, such as your own or private repos. Then
+   pick their modules in `addons.yaml`:
+
+   ```
+   godoo addons add git@github.com:acme/my-addons.git --branch main
+   ```
+   ```yaml
+   my-addons:          # added with `godoo addons add`
+     - my_module
+   web:                # OCA: no `addons add` needed
+     - web_responsive
+   ```
+
+Once `addons.yaml` exists, **a repo without an entry in it is inactive**, even
+one added with `godoo addons add`. godoo warns about it, and `name: ["*"]`
+makes all of its modules available. `godoo addons list`, `godoo addons update`
+and `godoo up` work for both kinds of repo.
+
+### The addons.yaml format
 
 By default, every module of every addon repo is available (on `addons_path`).
 To pick only some, add an `addons.yaml` next to `godoo.yaml`. It uses the same
@@ -345,6 +384,13 @@ How it works, as in doodba:
 - **Selected modules are symlinked** into `.godoo/addons/`, and that folder goes
   on `addons_path` instead of the whole repos. The symlinks are refreshed on
   every `godoo up`, `restart` and module command.
+- **Only the selected modules are downloaded.** When a repo's entry names
+  modules (not `"*"`), godoo checks out only those module folders with git's
+  sparse checkout, so the rest of the repo is never downloaded. For
+  `web: [web_responsive]`, `repos/oca/web` holds `web_responsive` and the
+  repo's top-level files, not all 40 modules. Change `addons.yaml` and the
+  next `godoo up` (or `setup`) adds or removes folders to match. `"*"`, or no
+  entry, checks out the whole repo again.
 - **Repos without an entry are inactive.** `godoo up` warns about each one.
   `name: ["*"]` activates all of a repo's modules.
 - **Your own addons stay available.** `odoo.addons` in `godoo.yaml` (doodba's
@@ -365,7 +411,17 @@ Two differences from doodba, both to make mistakes visible:
 - A module name found in two repos gives a warning and uses the first repo
   (doodba picks one at random).
 
-`godoo addons list` shows how many modules of each repo are active, and
+**A repo that was cloned whole** (before you added `addons.yaml`, or before
+its entry listed modules) is replaced on the next `godoo up` by a fresh clone
+of only the selected modules, like an update: it is at the latest commit of
+the same branch. It is replaced only when nothing would be lost. With local
+changes, commits that are not pushed, or stashes, godoo narrows it in place
+instead and tells you why. Then the files already downloaded stay in its
+`.git` until it is clean. If the new clone fails (no network, no access), the
+old one is put back.
+
+`godoo addons list` shows how many modules of each repo are checked out
+(`2 of 40`) and active, and
 `godoo addons deps` / `godoo doctor` check only the selected modules. Delete
 `addons.yaml` to go back to whole repos.
 
@@ -736,7 +792,7 @@ internal/versions/      per-Odoo-version knowledge (nixpkgs pin, packages, flags
 internal/project/       paths inside a project + the process environment
 internal/nix/           flake rendering, nix build/eval, python package lookup
 internal/pypi/          pure-python wheels from PyPI for what nixpkgs lacks
-internal/odoo/          odoo + repo clones, addons_path, odoo.conf, odoo-bin argv, dependency checks
+internal/odoo/          odoo + repo clones (sparse.go: only selected modules), addons_path, odoo.conf, odoo-bin argv, dependency checks
 internal/selection/     addons.yaml (doodba format): which modules of which repos
 internal/services/      postgres.go, mailpit.go, odoo.go, nginx.go + manager.go
 internal/proc/          start/stop/wait for background processes

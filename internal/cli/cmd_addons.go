@@ -91,7 +91,7 @@ func addonsAdd(ctx context.Context, args []string) error {
 			ui.Info("branch %s", r.Branch)
 		}
 		// Clone first: a typo or missing branch never ends up in godoo.yaml.
-		if err := odoo.CloneRepo(ctx, p, r); err != nil {
+		if err := odoo.CloneAddonRepo(ctx, p, r); err != nil {
 			return err
 		}
 		if err := config.Edit(p.Root, func(root *yaml.Node) error {
@@ -375,7 +375,7 @@ func addonsList(ctx context.Context, args []string) error {
 		if _, inYaml := p.Cfg.FindRepo(r.Name); !inYaml {
 			name += " (addons.yaml)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n", name, valueOr(r.Branch, "-"), st.Commit, st.Modules, active(p, addons, p.Abs(r.Path)), r.Path)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", name, valueOr(r.Branch, "-"), st.Commit, st.ModulesColumn(), active(p, addons, p.Abs(r.Path)), r.Path)
 	}
 	if err := w.Flush(); err != nil {
 		return err

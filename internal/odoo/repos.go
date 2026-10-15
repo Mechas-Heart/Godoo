@@ -21,7 +21,8 @@ import (
 
 // Addon repositories are cloned with --filter=blob:none: the full commit
 // history (so `git pull --ff-only` and `git log` work as usual) but file
-// contents are only downloaded for the checked-out branch.
+// contents are only downloaded for what is checked out - with addons.yaml,
+// only the selected modules (sparse.go).
 
 // AllRepos is godoo.yaml `repos:` plus the repositories only named in
 // addons.yaml, which doodba downloads automatically (from OCA by default).
@@ -37,15 +38,23 @@ func AllRepos(p *project.Project) ([]config.Repo, error) {
 	return append(slices.Clone(p.Cfg.Repos), implicit...), nil
 }
 
-// EnsureRepos clones every repo (see AllRepos) that is not there yet. A repo
+// EnsureRepos clones every repo (see AllRepos) that is not there yet, and
+// makes the checkout of the others match addons.yaml (see sparse.go). A repo
 // without a branch (only named in addons.yaml) gets one detected.
 func EnsureRepos(ctx context.Context, p *project.Project) error {
 	repos, err := AllRepos(p)
 	if err != nil {
 		return err
 	}
+	sel, err := selection.Load(p.Root, p.Cfg.Env)
+	if err != nil {
+		return err
+	}
 	for _, r := range repos {
 		if _, err := os.Stat(filepath.Join(p.Abs(r.Path), ".git")); err == nil {
+			if err := SyncRepoCheckout(ctx, p, sel, r); err != nil {
+				return err
+			}
 			continue
 		}
 		if r.Branch == "" {
@@ -56,7 +65,7 @@ func EnsureRepos(ctx context.Context, p *project.Project) error {
 			r.Branch = b.Name
 			WarnFallback(b, r.URL, p.Cfg.Odoo.Version)
 		}
-		if err := CloneRepo(ctx, p, r); err != nil {
+		if err := CloneAddonRepo(ctx, p, r); err != nil {
 			return err
 		}
 	}
@@ -148,16 +157,50 @@ func CurrentBranch(ctx context.Context, p *project.Project, dir string) (string,
 // RepoStatus is a one-line summary for `godoo addons list`.
 type RepoStatus struct {
 	Commit  string // short hash and date, or "not cloned"
-	Modules int
+	Modules int    // module folders checked out
+	Total   int    // modules in the repo, when only some are checked out (sparse)
+}
+
+// ModulesColumn is "40", or "2 of 40" for a partial checkout.
+func (s RepoStatus) ModulesColumn() string {
+	if s.Total > 0 {
+		return fmt.Sprintf("%d of %d", s.Modules, s.Total)
+	}
+	return fmt.Sprint(s.Modules)
 }
 
 func StatusOf(ctx context.Context, p *project.Project, r config.Repo) RepoStatus {
 	dir := p.Abs(r.Path)
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		// not cloned yet: don't let git print "fatal: cannot change to ..."
+		return RepoStatus{Commit: "not cloned (run godoo setup)"}
+	}
 	commit, err := git(ctx, p, dir, "log", "-1", "--format=%h %cs")
 	if err != nil {
 		return RepoStatus{Commit: "not cloned (run godoo setup)"}
 	}
-	return RepoStatus{Commit: commit, Modules: len(ModulesIn(dir))}
+	st := RepoStatus{Commit: commit, Modules: len(ModulesIn(dir))}
+	if sparse, _ := git(ctx, p, dir, "config", "--get", "core.sparseCheckout"); sparse == "true" {
+		if files, err := git(ctx, p, dir, "ls-tree", "-r", "--name-only", "HEAD"); err == nil {
+			st.Total = len(gitModules(files))
+		}
+	}
+	return st
+}
+
+// gitModules lists the modules (<module>/__manifest__.py) in the output of
+// `git ls-tree -r --name-only`, so a repo's modules are known without
+// checking them out.
+func gitModules(files string) []string {
+	var mods []string
+	for _, f := range strings.Split(files, "\n") {
+		module, manifest, ok := strings.Cut(f, "/")
+		if ok && (manifest == "__manifest__.py" || manifest == "__openerp__.py") && !slices.Contains(mods, module) {
+			mods = append(mods, module)
+		}
+	}
+	slices.Sort(mods)
+	return mods
 }
 
 // ModulesIn lists the module directories directly in dir (see project.ModulesIn).

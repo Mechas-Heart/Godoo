@@ -115,7 +115,16 @@ base="https://github.com/$REPO/releases/download/$version"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
-say "downloading godoo $version for $os/$arch"
+# An existing godoo in the install dir is replaced, like an update.
+current=""
+if [ -x "$INSTALL_DIR/godoo" ]; then
+	current=$("$INSTALL_DIR/godoo" version 2>/dev/null | awk '{ print $2 }') || true
+fi
+case "$current" in
+	"") say "downloading godoo $version for $os/$arch" ;;
+	"$version") say "godoo $version is already installed; installing it again" ;;
+	*) say "replacing godoo ${current} with $version ($os/$arch)" ;;
+esac
 curl -fsSL -o "$tmp/$name.tar.gz" "$base/$name.tar.gz" ||
 	fail "no download at $base/$name.tar.gz (is $version a release?)"
 curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" ||
@@ -144,6 +153,12 @@ say "installed $INSTALL_DIR/godoo"
 "$INSTALL_DIR/godoo" version
 
 # --- 5. Hints ---
+# Another godoo earlier on PATH (go install, an old copy) would still win.
+found=$(command -v godoo 2>/dev/null || true)
+if [ -n "$found" ] && [ "$found" != "$INSTALL_DIR/godoo" ]; then
+	say "warning: \`godoo\` runs $found ($("$found" version 2>/dev/null | awk '{ print $2 }')), not the one just installed."
+	say "  remove it (rm $found) or put $INSTALL_DIR first in PATH"
+fi
 case ":$PATH:" in
 	*":$INSTALL_DIR:"*) ;;
 	*) say "note: $INSTALL_DIR is not on your PATH; add this to your shell profile:"
