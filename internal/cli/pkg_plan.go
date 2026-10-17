@@ -5,6 +5,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -22,21 +23,51 @@ import (
 //  3. pure-python wheel on PyPI         -> nix.pypi_packages, and its own
 //     dependencies go through the same steps
 //  4. otherwise                         -> unresolved (needs a nix derivation)
+//
+// NAME==VERSION asks for that exact version. When Odoo's set or nixpkgs has
+// it, steps 1-2 apply as usual; otherwise that version's wheel is pinned
+// from PyPI, and the generated flake uses it instead of the package of the
+// same name in Odoo's set (see flake.nix.tmpl, `pinned`).
 type pkgPlan struct {
 	nixpkgs    []nix.PythonPackage
 	wheels     []pypi.Release
 	inBase     []string
 	unresolved map[string]string // name -> reason
 	neededBy   map[string]string // dependency -> package that pulled it in
+	replaces   map[string]string // wheel name -> "3.0.1 from odoo's packages"
+}
+
+// splitSpec splits "PyPDF2==2.12.1" into name and version ("" = any).
+func splitSpec(spec string) (name, version string, err error) {
+	name, version, pinned := strings.Cut(spec, "==")
+	name, version = strings.TrimSpace(name), strings.TrimSpace(version)
+	switch {
+	case strings.ContainsAny(name, "<>=!~ "):
+		return "", "", fmt.Errorf("%q: only NAME or NAME==VERSION are supported", spec)
+	case pinned && version == "":
+		return "", "", fmt.Errorf("%q: missing version after ==", spec)
+	}
+	return name, version, nil
 }
 
 // maxDepth bounds how far wheel dependencies are followed.
 const maxDepth = 5
 
-func planPackages(ctx context.Context, p *project.Project, names []string) (pkgPlan, error) {
-	plan := pkgPlan{unresolved: map[string]string{}, neededBy: map[string]string{}}
+func planPackages(ctx context.Context, p *project.Project, specs []string) (pkgPlan, error) {
+	plan := pkgPlan{unresolved: map[string]string{}, neededBy: map[string]string{}, replaces: map[string]string{}}
 	seen := map[string]bool{}
-	queue := names
+	want := map[string]string{} // normalized name -> requested version
+	var queue []string
+	for _, spec := range specs {
+		name, version, err := splitSpec(spec)
+		if err != nil {
+			return plan, err
+		}
+		if version != "" {
+			want[normalizeName(name)] = version
+		}
+		queue = append(queue, name)
+	}
 
 	for depth := 0; len(queue) > 0 && depth < maxDepth; depth++ {
 		var batch []string
@@ -55,16 +86,27 @@ func planPackages(ctx context.Context, p *project.Project, names []string) (pkgP
 		if err != nil {
 			return plan, err
 		}
+		var fromPypi []string
 		for _, f := range look.Found {
+			if v := want[normalizeName(f.Requested)]; v != "" && v != f.Version {
+				where := "nixpkgs"
+				if look.InBase(f.Requested) {
+					where = "odoo's packages"
+				}
+				ui.Debug("%s: nixpkgs has %s, asking PyPI for %s", f.Requested, f.Version, v)
+				plan.replaces[normalizeName(f.Requested)] = f.Version + " from " + where
+				fromPypi = append(fromPypi, f.Requested)
+				continue
+			}
 			if look.InBase(f.Requested) {
 				plan.inBase = append(plan.inBase, f.Requested)
 				continue
 			}
 			plan.nixpkgs = append(plan.nixpkgs, f)
 		}
-		for _, name := range look.Missing {
+		for _, name := range append(look.Missing, fromPypi...) {
 			ui.Debug("%s is not in nixpkgs, asking PyPI", name)
-			rel, err := pypi.Latest(ctx, name)
+			rel, err := pypi.Get(ctx, name, want[normalizeName(name)])
 			if err != nil {
 				plan.unresolved[name] = err.Error()
 				continue
@@ -93,7 +135,16 @@ func (plan pkgPlan) print() {
 		ui.Info("%-22s nixpkgs  %s %s%s", f.Requested, f.Attr, f.Version, note(f.Requested))
 	}
 	for _, w := range plan.wheels {
-		ui.Info("%-22s pypi     %s (pinned wheel)%s", w.Name, w.Version, note(w.Name))
+		replaces := ""
+		if r := plan.replaces[normalizeName(w.Name)]; r != "" {
+			replaces = ", replaces " + r
+		}
+		ui.Info("%-22s pypi     %s (pinned wheel%s)%s", w.Name, w.Version, replaces, note(w.Name))
+	}
+	for _, w := range plan.wheels {
+		if r := plan.replaces[normalizeName(w.Name)]; strings.HasSuffix(r, "odoo's packages") {
+			ui.Warn("%s %s replaces the version in Odoo's package set; `godoo pkg remove %s` goes back to it", w.Name, w.Version, w.Name)
+		}
 	}
 	for _, n := range plan.inBase {
 		if plan.neededBy[n] == "" { // only mention what the user asked for

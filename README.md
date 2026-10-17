@@ -250,6 +250,7 @@ They then rebuild what changed and restart Odoo if it is running.
 
 ```
 godoo pkg add pandas PyYAML          # pip-style names are fine
+godoo pkg add PyPDF2==2.12.1         # an exact version (replaces the one from nixpkgs)
 godoo pkg add --local pytest-odoo    # local only, never in prod
 godoo pkg remove pandas
 godoo pkg list                       # what you have, and what is local-only
@@ -279,32 +280,34 @@ godoo addons list
 4. Anything else is reported instead of added. A compiled package without a
    pure wheel needs a small Nix derivation.
 
-**Package versions.** `godoo pkg add` has no `name==1.2.3` form. You get:
+**Package versions.** Without a version you get the one in the project's
+pinned nixpkgs (`nix.python_nixpkgs`, e.g. `nixos-25.05`) or, from PyPI, the
+latest release with a pure-Python wheel. To get an exact version:
 
-| Source | Version |
-|---|---|
-| Odoo's package set and nixpkgs | the one version in the project's pinned nixpkgs (`nix.python_nixpkgs`, e.g. `nixos-25.05`) |
-| PyPI wheel | the latest release that has a pure-Python wheel, at the time you add it |
+```
+godoo pkg add PyPDF2==2.12.1
+```
 
-That is how Nix works: a nixpkgs pin has exactly one version of each package,
-and one Python environment cannot hold two versions of the same package.
-Both kinds are pinned, so they don't change by themselves. A nixpkgs package
-changes only with `godoo nix-update`, and a PyPI wheel only when you edit
-`godoo.yaml`.
+- If Odoo's set or nixpkgs already has that version, it is used as usual.
+- Otherwise godoo pins that version's pure-Python wheel from PyPI in
+  `nix.pypi_packages`. The pinned wheel **replaces** the package of the same
+  name from Odoo's set or nixpkgs, because one Python environment cannot hold
+  two versions of a package. godoo warns when it replaces a package from
+  Odoo's set: Odoo was tested with the other version, unless (as here) Odoo's
+  `requirements.txt` asks for the pinned one.
+- `godoo pkg remove PyPDF2` goes back to the version from nixpkgs.
+- Only `==` works (no `>=`, `<`, `~=`): the version must be exact to be
+  pinned.
+- A version without a pure-Python wheel (a compiled package such as `lxml`)
+  is refused. It needs a hand-written Nix derivation.
 
-To use another version of a **PyPI wheel** (`nix.pypi_packages`), edit its
-entry by hand and run `godoo up`:
+Example: nixpkgs 25.05 ships PyPDF2 3.0.1, but Odoo 19 on Python 3.12 asks for
+2.12.1 and breaks on 3.x (sale order PDFs, merged PDFs).
+`godoo pkg add PyPDF2==2.12.1` fixes that.
 
-1. Find the wheel at `https://pypi.org/pypi/<name>/<version>/json` (the
-   `py3-none-any.whl` or `py2.py3-none-any.whl` file under `urls`).
-2. Get its hash in the form godoo uses:
-   `nix store prefetch-file <wheel url>` prints `hash 'sha256-...'`.
-3. Put the new `version`, `url` and `hash` in the entry.
-
-Another version of a package from **nixpkgs or Odoo's set** (for example
-`requests` or `lxml`) is not supported. It would have to replace the version
-Odoo was tested with inside the Python environment, which needs a Nix
-override.
+Pinned versions never change by themselves. A nixpkgs package changes only
+with `godoo nix-update`, and a pinned wheel only with another `godoo pkg add
+NAME==VERSION`.
 
 **Addon repos** are registered first and downloaded only for the modules
 you pick (see [`godoo addons` or `addons.yaml`?](#godoo-addons-or-addonsyaml)).
@@ -555,7 +558,9 @@ mailpit, git, wkhtmltopdf and rtlcss come from `nixos-25.05`.
 
 Package versions come from nixpkgs, not from the exact pins in Odoo's
 `requirements.txt`. `godoo doctor` checks that every requirement is present;
-`--versions` lists them side by side.
+`--versions` lists them side by side. When a version difference breaks
+something, pin Odoo's version with `godoo pkg add NAME==VERSION` (see
+[Package versions](#python-packages-and-addon-repos)).
 
 Odoo 11 to 14 are not supported. nixpkgs never packaged them, so there is no
 tested package set to build on.
@@ -636,7 +641,7 @@ These edit `godoo.yaml`, rebuild what changed and restart Odoo if it runs. See
 
 | Command | What it does |
 |---|---|
-| `godoo pkg add NAME... [--local]` | add Python packages (pip-style names); `--local`: never in prod |
+| `godoo pkg add NAME[==VERSION]... [--local]` | add Python packages (pip-style names); `==VERSION`: that exact version ([details](#python-packages-and-addon-repos)); `--local`: never in prod |
 | `godoo pkg remove NAME...` | remove them |
 | `godoo pkg list` | the project's packages, where each comes from, which are local-only |
 | `godoo addons add REPO...` | register addon repos (nothing downloaded); the branch is detected (`18.0`, `18`, then the default branch) ([details](#godoo-addons-or-addonsyaml)) |

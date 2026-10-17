@@ -35,7 +35,11 @@ var client = &http.Client{Timeout: 30 * time.Second}
 // Latest returns the newest release of name that ships a pure-python wheel
 // (py3-none-any). Packages with only sdists or compiled wheels are refused:
 // they need a hand-written nix derivation.
-func Latest(ctx context.Context, name string) (Release, error) {
+func Latest(ctx context.Context, name string) (Release, error) { return Get(ctx, name, "") }
+
+// Get returns release version of name ("" = the newest), with the same
+// pure-wheel rule as Latest.
+func Get(ctx context.Context, name, version string) (Release, error) {
 	var data struct {
 		Info struct {
 			Name         string   `json:"name"`
@@ -51,6 +55,9 @@ func Latest(ctx context.Context, name string) (Release, error) {
 		} `json:"urls"`
 	}
 	endpoint := "https://pypi.org/pypi/" + url.PathEscape(name) + "/json"
+	if version != "" {
+		endpoint = "https://pypi.org/pypi/" + url.PathEscape(name) + "/" + url.PathEscape(version) + "/json"
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return Release{}, err
@@ -61,6 +68,9 @@ func Latest(ctx context.Context, name string) (Release, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
+		if version != "" {
+			return Release{}, fmt.Errorf("version %s of %s is not on PyPI", version, name)
+		}
 		return Release{}, fmt.Errorf("not on PyPI either")
 	}
 	if resp.StatusCode != http.StatusOK {

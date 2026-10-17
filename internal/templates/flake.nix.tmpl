@@ -92,13 +92,23 @@
         doCheck = false;
       };
 
+      # PyPI spells names freely ("PyPDF2", "pypdf2", "py_pdf2"): compare
+      # them lowercased, with "_" and "." as "-".
+      normalize = name: nixpkgs.lib.toLower (builtins.replaceStrings [ "_" "." ] [ "-" "-" ] name);
+
+      # A pinned wheel wins over the package of the same name from Odoo's set
+      # or nixpkgs (`godoo pkg add NAME==VERSION`), so the Python never holds
+      # two versions of it.
+      pinned = map (wheel: normalize wheel.name) settings.pypiPackages;
+      notPinned = dep: !(builtins.elem (normalize (dep.pname or "")) pinned);
+
       # One Python with everything Odoo imports - no virtualenv, no pip.
       # Odoo itself runs from the ./odoo checkout.
       odooPython = py:
         let base = odooBase py; in
         base.python.withPackages (ps:
-          base.packages
-          ++ map (byName ps) (settings.extraPythonPackages ++ settings.localPythonPackages)
+          builtins.filter notPinned (base.packages
+            ++ map (byName ps) (settings.extraPythonPackages ++ settings.localPythonPackages))
           ++ map (fromPypi py ps) settings.pypiPackages);
     in
     {
