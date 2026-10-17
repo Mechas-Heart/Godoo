@@ -279,6 +279,33 @@ godoo addons list
 4. Anything else is reported instead of added. A compiled package without a
    pure wheel needs a small Nix derivation.
 
+**Package versions.** `godoo pkg add` has no `name==1.2.3` form. You get:
+
+| Source | Version |
+|---|---|
+| Odoo's package set and nixpkgs | the one version in the project's pinned nixpkgs (`nix.python_nixpkgs`, e.g. `nixos-25.05`) |
+| PyPI wheel | the latest release that has a pure-Python wheel, at the time you add it |
+
+That is how Nix works: a nixpkgs pin has exactly one version of each package,
+and one Python environment cannot hold two versions of the same package.
+Both kinds are pinned, so they don't change by themselves. A nixpkgs package
+changes only with `godoo nix-update`, and a PyPI wheel only when you edit
+`godoo.yaml`.
+
+To use another version of a **PyPI wheel** (`nix.pypi_packages`), edit its
+entry by hand and run `godoo up`:
+
+1. Find the wheel at `https://pypi.org/pypi/<name>/<version>/json` (the
+   `py3-none-any.whl` or `py2.py3-none-any.whl` file under `urls`).
+2. Get its hash in the form godoo uses:
+   `nix store prefetch-file <wheel url>` prints `hash 'sha256-...'`.
+3. Put the new `version`, `url` and `hash` in the entry.
+
+Another version of a package from **nixpkgs or Odoo's set** (for example
+`requests` or `lxml`) is not supported. It would have to replace the version
+Odoo was tested with inside the Python environment, which needs a Nix
+override.
+
 **Addon repos** are registered first and downloaded only for the modules
 you pick (see [`godoo addons` or `addons.yaml`?](#godoo-addons-or-addonsyaml)).
 They go into `./repos/<owner>/<name>`.
