@@ -18,7 +18,7 @@
     let
       # Bump together with the release tag: the release workflow refuses a
       # tag that does not match.
-      version = "0.6.0";
+      version = "0.7.0";
 
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
