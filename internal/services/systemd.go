@@ -5,6 +5,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -16,6 +17,19 @@ import (
 // systemd owns its processes: Start, Stop, IsRunning and Status below go
 // through systemctl instead of pid files, so godoo and systemd never start
 // the same service twice.
+
+// ErrProdNeedsSystemd: in env prod, services run only under systemd, so a
+// server starts them at boot and restarts them after a crash. godoo never
+// runs a prod service as a plain background process.
+var ErrProdNeedsSystemd = errors.New(`env prod runs its services only under systemd; install the units first:
+  sudo godoo service install     as root: installs and starts them
+  godoo service install          prints the sudo commands to install them
+  godoo service install --user   user units in your account, no root`)
+
+// PrepareHook prepares a service (config files, initdb) before systemd
+// starts it. As root, the cli replaces it so the files are written by the
+// account the services run as, never by root.
+var PrepareHook = func(ctx context.Context, s Service) error { return s.Prepare(ctx) }
 
 // Managed reports whether p's services run under systemd, and in which mode.
 func Managed(p *project.Project) (systemd.Mode, bool) {
@@ -69,7 +83,7 @@ func unit(s Service) string { return systemd.ServiceUnit(s.proj().Cfg.Name, s.Na
 // startUnit starts s with systemctl, after Prepare (config files, initdb)
 // as `godoo up` does, and waits for its port.
 func startUnit(ctx context.Context, mode systemd.Mode, s Service) error {
-	if err := s.Prepare(ctx); err != nil {
+	if err := PrepareHook(ctx, s); err != nil {
 		return fmt.Errorf("%s: %w", s.Name(), err)
 	}
 	if _, err := systemd.Systemctl(ctx, mode, "start", unit(s)); err != nil {

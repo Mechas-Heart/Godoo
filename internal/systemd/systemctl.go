@@ -51,6 +51,33 @@ func Write(dir string, units []Unit) error {
 	return nil
 }
 
+// Read loads project's unit files from dir (the ones that exist).
+func Read(dir, project string) ([]Unit, error) {
+	var units []Unit
+	for _, name := range append(serviceUnits(project), Target(project)) {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		units = append(units, Unit{name, string(b)})
+	}
+	if len(units) == 0 {
+		return nil, fmt.Errorf("no unit files for %s in %s", project, dir)
+	}
+	return units, nil
+}
+
+func serviceUnits(project string) []string {
+	var out []string
+	for _, s := range serviceNames {
+		out = append(out, ServiceUnit(project, s))
+	}
+	return out
+}
+
 // serviceNames are every service a project can have (services.All). Remove
 // deletes their units by exact name: a glob like godoo-shop-*.service would
 // also match a project called "shop-x".

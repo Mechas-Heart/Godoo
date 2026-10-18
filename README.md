@@ -195,8 +195,9 @@ itself with `odoo-bin`, so Ctrl-C and debuggers behave as usual.
 ## Running as a service (systemd)
 
 ```
-godoo service install            # user services: no root, starts with your login
-godoo service install --system   # system services: prints the sudo commands
+sudo "$(command -v godoo)" service install   # as root: system units, installed and started
+godoo service install --system               # as you: prints the sudo commands instead
+godoo service install --user                 # user units in your account, no root
 godoo service status
 godoo service remove
 ```
@@ -206,46 +207,99 @@ godoo service remove
 ```
 godoo-shop.target              starts everything, enabled at boot
 godoo-shop-postgres.service
-godoo-shop-mailpit.service     (when mailpit is enabled)
+godoo-shop-mailpit.service     (when mailpit is enabled; off in prod)
 godoo-shop-odoo.service
 godoo-shop-nginx.service
 ```
 
 **The project then runs without godoo.** Each unit runs the same command line
 as `godoo up`, with the same Nix environment, config files and log files in
-`.godoo/`. No unit calls godoo. systemd starts the services at boot, in order
-(postgres before odoo, odoo before nginx), and restarts any that crash.
-`systemctl` alone controls them:
+`.godoo/`. No unit calls godoo, and the Nix environment is a garbage-collector
+root, so `nix-collect-garbage` never removes it. systemd starts the services
+at boot, in order (postgres before odoo, odoo before nginx), and restarts any
+that crash. `systemctl` alone controls them:
 
 ```
-systemctl --user restart godoo-shop-odoo.service     # (sudo systemctl ... for system units)
-systemctl --user stop godoo-shop.target              # stops all of them
+sudo systemctl restart godoo-shop-odoo.service   # (systemctl --user ... for user units)
+sudo systemctl stop godoo-shop.target            # stops all of them
 ```
 
-- **User services** (the default) go into `~/.config/systemd/user` and need
-  no root. They start when you log in. To start them at boot without logging
-  in, run `loginctl enable-linger $USER` once; godoo reminds you.
-- **System services** (`--system`) are for servers. They run as you
-  (`User=`) and start at boot (`multi-user.target`). godoo never runs as
-  root: it writes the units into `.godoo/systemd/` and prints the three
-  `sudo` commands that copy, reload and enable them. `godoo service remove`
-  prints the commands that undo it.
+godoo is only needed again to change something: new modules or packages,
+another Odoo setting, other ports.
+
+### Production runs only under systemd
+
+In `env: prod`, godoo never runs a service as a plain background process.
+`godoo up` (and every command that would start postgres, such as `godoo db
+list`) stops with the three ways to install the units. A prod server starts
+at boot and restarts after a crash, or it doesn't run. `godoo service install`
+defaults to system units in prod and to user units in local.
+
+### Three ways to install
+
+| How | Units | Runs as | Who installs |
+|---|---|---|---|
+| `sudo godoo service install` | `/etc/systemd/system` | the project's owner, or `--run-as NAME` | godoo, as root |
+| `godoo service install --system` | `/etc/systemd/system` | you | you, with the 3 `sudo` commands godoo prints |
+| `godoo service install --user` | `~/.config/systemd/user` | you | godoo, no root |
+
+**As root.** PostgreSQL refuses to run as root, so the services always run as
+an account:
+
+- The project's owner by default. For a project in your home directory, that
+  is you.
+- If the project belongs to root (for example `/opt/shop` set up in a root
+  shell), an account called `odoo`, or the one you name with `--run-as NAME`.
+  godoo creates it if it doesn't exist (a system account without login, with
+  the project as its home) and asks before giving it the project
+  (`chown -R`; `--yes` skips the question).
+
+Root only installs and starts the units. Everything that writes project
+files (the Nix environment, `odoo.conf`, `nginx.conf`, the PostgreSQL
+cluster) runs as that account, so the services can always write their own
+files. Afterwards:
+
+```
+sudo godoo up | down | restart | status        # through systemctl
+sudo -u odoo godoo install sale ...            # everything else, as the account
+```
+
+godoo refuses other commands as root (they would write files as root), and
+tells you the `sudo -u` form. Read-only commands (`status`, `logs`, `config`,
+`doctor`, ...) always work. `sudo` often has its own `PATH`, hence
+`sudo "$(command -v godoo)"`. Installing godoo to `/usr/local/bin`
+(`GODOO_INSTALL_DIR=/usr/local/bin` with the install script) avoids that, and
+lets other accounts such as `odoo` run it.
+
+**System units without root access for godoo** (`--system`): godoo writes
+the units into `.godoo/systemd/` and prints the `sudo cp`, `daemon-reload`
+and `enable --now` commands. They run as you.
+
+**User units** (`--user`) go into `~/.config/systemd/user`. They start when
+you log in; to start them at boot without logging in, run
+`loginctl enable-linger $USER` once (godoo reminds you).
+
+### Day to day
+
 - **godoo's own commands keep working.** Once the units are installed,
   `godoo up`, `down`, `restart` and `status` go through `systemctl`, so godoo
-  and systemd never start the same service twice. Commands that rewrite the
-  config files (`godoo up`, `pkg add`, `addons add`, ...) restart odoo through
-  systemd as well.
-- **Changes:** `odoo.conf` and `nginx.conf` are still rewritten by
-  `godoo up` / `restart`. After changing ports or turning mailpit on or off in
+  and systemd never start the same service twice. Commands that change the
+  config (`pkg add`, `addons add`, ...) restart odoo through systemd too.
+- **Changes:** `odoo.conf` and `nginx.conf` are rewritten by `godoo up` /
+  `restart`. After changing ports or turning mailpit on or off in
   `godoo.yaml`, run `godoo service install` again to rewrite the units.
 - `godoo destroy` refuses while the units are installed. Run
-  `godoo service remove` first.
+  `godoo service remove` first (as root for system units, or it prints the
+  `sudo` commands).
 
-Tested with user services on WSL2 (systemd 252): install over a running
-`godoo up`, plain `systemctl` stop/start, recovery after `kill -9` of odoo,
-`godoo up/down/restart/status` through systemd, reinstall and remove. System
-services are generated and their sudo commands printed, but installing them
-has not been tested yet.
+**Tested** on WSL2 (systemd 252) with user units, in local and prod: install
+over a running `godoo up`, plain `systemctl` stop/start, recovery after
+`kill -9` of odoo, `godoo up/down/restart/status` and `godoo db list` through
+systemd, prod refusing plain processes, reinstall and remove. The root
+guard (which commands root may run) was tested in a user namespace.
+**Not tested yet:** installing system units (as root or with the printed
+sudo commands), creating the `odoo` account and the `chown`. Test those on a
+throwaway machine first.
 
 ## Local vs prod
 
@@ -288,8 +342,14 @@ same checkout as prod on a server:
 ```
 export GODOO_ENV=prod
 export GODOO_ADMIN_PASSWD='a-long-random-secret'   # kept out of git
-godoo up
+godoo service install          # prod runs only under systemd
 ```
+
+`GODOO_ENV` and `GODOO_ADMIN_PASSWD` must be set every time godoo writes
+`odoo.conf` (`service install`, `up`, `restart`), or the server gets a local
+config. `sudo` drops them, so pass them along:
+`sudo GODOO_ENV=prod GODOO_ADMIN_PASSWD=... "$(command -v godoo)" service install`.
+On a server, `env: prod` in `godoo.yaml` is simpler and cannot be forgotten.
 
 `godoo status` and `godoo config` show where `env` came from. Prod refuses
 to start while the master password is still `admin`. Alternatively, a prod
@@ -661,7 +721,7 @@ godoo [-v] [-C DIR] <command> [arguments] [flags] [-- passthrough]
 | `godoo up` | build what is missing, then start postgres, mailpit, odoo, nginx |
 | `godoo down [--all]` | stop all services; data is kept (`--all`: of every project on this machine) |
 | `godoo status` | state, pid, port and log file of each service |
-| `godoo service install [--system] \| remove \| status` | run the project under systemd: starts at boot, restarts on failure, works without godoo ([details](#running-as-a-service-systemd)) |
+| `godoo service install [--user\|--system] [--run-as NAME] \| remove \| status` | run the project under systemd: starts at boot, restarts on failure, works without godoo; the only way to run env prod ([details](#running-as-a-service-systemd)) |
 | `godoo restart [SERVICE]` | restart one service: `odoo` (default), `postgres`, `nginx`, `mailpit` |
 | `godoo logs [SERVICE\|all] [-f] [-n 100]` | show a log (default `odoo`); `-f` follows it |
 | `godoo run [-- ODOO_ARGS]` | Odoo in the foreground instead of the background, for `breakpoint()` and pdb |
@@ -899,6 +959,7 @@ internal/odoo/          odoo + repo clones (sparse.go: only selected modules), a
 internal/selection/     addons.yaml (doodba format): which modules of which repos
 internal/services/      postgres.go, mailpit.go, odoo.go, nginx.go + manager.go;
                         systemd.go hands start/stop to systemctl once units are installed
+internal/cli/runas.go   running as root: which commands may run, preparing as the service account
 internal/systemd/       unit files (units.go) and systemctl (systemctl.go)
 internal/proc/          start/stop/wait for background processes
 internal/registry/      the list of projects on this machine

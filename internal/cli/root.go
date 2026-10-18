@@ -80,6 +80,17 @@ func Main(args []string) int {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		// As root, only commands that go through systemd run (see runas.go).
+		acct, err := rootGuard(c.name)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		if acct != nil {
+			if p, err := openProject(); err == nil {
+				prepareAsOwner(p, acct)
+			}
+		}
 		if err := c.run(ctx, args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return 0

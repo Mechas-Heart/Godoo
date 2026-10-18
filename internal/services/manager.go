@@ -67,6 +67,9 @@ func Start(ctx context.Context, s Service) error {
 		ui.Info("%-8s started (systemd, pid %d, port %d)", s.Name(), pid, s.Port())
 		return nil
 	}
+	if s.proj().Cfg.Env == config.EnvProd {
+		return ErrProdNeedsSystemd
+	}
 	if pid, ok := proc.Running(spec.PidFile); ok {
 		ui.Info("%-8s already running (pid %d)", s.Name(), pid)
 		return nil
