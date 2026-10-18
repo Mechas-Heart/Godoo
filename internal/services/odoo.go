@@ -18,6 +18,7 @@ import (
 // Odoo is the odoo-bin server, listening on 127.0.0.1:ports.odoo behind nginx.
 type Odoo struct{ p *project.Project }
 
+func (s *Odoo) proj() *project.Project      { return s.p }
 func (s *Odoo) Name() string                { return "odoo" }
 func (s *Odoo) Enabled() bool               { return true }
 func (s *Odoo) Port() int                   { return s.p.Cfg.Ports.Odoo }

@@ -18,6 +18,7 @@ import (
 // SMTP on 127.0.0.1:ports.smtp, web UI on nginx.listen:ports.mailpit.
 type Mailpit struct{ p *project.Project }
 
+func (s *Mailpit) proj() *project.Project            { return s.p }
 func (s *Mailpit) Name() string                      { return "mailpit" }
 func (s *Mailpit) Enabled() bool                     { return s.p.Cfg.MailpitOn() }
 func (s *Mailpit) Port() int                         { return s.p.Cfg.Ports.Mailpit }

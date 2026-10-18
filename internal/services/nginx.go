@@ -20,6 +20,7 @@ import (
 // (pid, temp dirs, logs) inside the project.
 type Nginx struct{ p *project.Project }
 
+func (s *Nginx) proj() *project.Project      { return s.p }
 func (s *Nginx) Name() string                { return "nginx" }
 func (s *Nginx) Enabled() bool               { return true }
 func (s *Nginx) Port() int                   { return s.p.Cfg.Ports.HTTP }

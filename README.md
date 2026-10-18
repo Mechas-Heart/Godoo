@@ -33,6 +33,7 @@ its services: **PostgreSQL, Odoo, nginx and (locally) mailpit**.
 - [Requirements and install](#requirements-and-install)
 - [Quick start](#quick-start)
 - [The services](#the-services)
+- [Running as a service (systemd)](#running-as-a-service-systemd)
 - [Local vs prod](#local-vs-prod)
 - [Selecting modules: addons.yaml](#selecting-modules-addonsyaml)
 - [Community or Enterprise](#community-or-enterprise)
@@ -171,10 +172,11 @@ shows the last lines of its log. Each service has:
 `godoo down` stops them in reverse order (nginx, odoo, mailpit, postgres)
 with each one's graceful-shutdown signal. Your data is kept.
 
-**No systemd.** godoo does not install services into systemd. Nothing starts
-at boot and nothing restarts after a crash, so run `godoo up` again. This keeps
-it working without root on WSL, macOS and any Linux, and many projects never
-leave service files behind.
+**No systemd by default.** `godoo up` runs the services as plain background
+processes. Nothing starts at boot and nothing restarts after a crash, so run
+`godoo up` again. This works without root on WSL, macOS and any Linux. For a
+server, or anything that should start at boot, see
+[Running as a service (systemd)](#running-as-a-service-systemd).
 
 **Day to day:**
 
@@ -189,6 +191,61 @@ godoo run                # odoo in the foreground, for breakpoint()/pdb
 itself with `odoo-bin`, so Ctrl-C and debuggers behave as usual.
 `godoo run --debugpy` does the same under debugpy; see
 [Local vs prod](#local-vs-prod).
+
+## Running as a service (systemd)
+
+```
+godoo service install            # user services: no root, starts with your login
+godoo service install --system   # system services: prints the sudo commands
+godoo service status
+godoo service remove
+```
+
+`godoo service install` writes plain systemd unit files for the project:
+
+```
+godoo-shop.target              starts everything, enabled at boot
+godoo-shop-postgres.service
+godoo-shop-mailpit.service     (when mailpit is enabled)
+godoo-shop-odoo.service
+godoo-shop-nginx.service
+```
+
+**The project then runs without godoo.** Each unit runs the same command line
+as `godoo up`, with the same Nix environment, config files and log files in
+`.godoo/`. No unit calls godoo. systemd starts the services at boot, in order
+(postgres before odoo, odoo before nginx), and restarts any that crash.
+`systemctl` alone controls them:
+
+```
+systemctl --user restart godoo-shop-odoo.service     # (sudo systemctl ... for system units)
+systemctl --user stop godoo-shop.target              # stops all of them
+```
+
+- **User services** (the default) go into `~/.config/systemd/user` and need
+  no root. They start when you log in. To start them at boot without logging
+  in, run `loginctl enable-linger $USER` once; godoo reminds you.
+- **System services** (`--system`) are for servers. They run as you
+  (`User=`) and start at boot (`multi-user.target`). godoo never runs as
+  root: it writes the units into `.godoo/systemd/` and prints the three
+  `sudo` commands that copy, reload and enable them. `godoo service remove`
+  prints the commands that undo it.
+- **godoo's own commands keep working.** Once the units are installed,
+  `godoo up`, `down`, `restart` and `status` go through `systemctl`, so godoo
+  and systemd never start the same service twice. Commands that rewrite the
+  config files (`godoo up`, `pkg add`, `addons add`, ...) restart odoo through
+  systemd as well.
+- **Changes:** `odoo.conf` and `nginx.conf` are still rewritten by
+  `godoo up` / `restart`. After changing ports or turning mailpit on or off in
+  `godoo.yaml`, run `godoo service install` again to rewrite the units.
+- `godoo destroy` refuses while the units are installed. Run
+  `godoo service remove` first.
+
+Tested with user services on WSL2 (systemd 252): install over a running
+`godoo up`, plain `systemctl` stop/start, recovery after `kill -9` of odoo,
+`godoo up/down/restart/status` through systemd, reinstall and remove. System
+services are generated and their sudo commands printed, but installing them
+has not been tested yet.
 
 ## Local vs prod
 
@@ -239,7 +296,8 @@ to start while the master password is still `admin`. Alternatively, a prod
 project created with `godoo init --env prod` gets random passwords written into
 its own `godoo.yaml`.
 
-Prod gaps still to fill: TLS/HTTPS, start at boot (systemd) and backups.
+Prod gaps still to fill: TLS/HTTPS and backups. To start at boot and restart
+after a crash, see [Running as a service](#running-as-a-service-systemd).
 
 ## Python packages and addon repos
 
@@ -603,6 +661,7 @@ godoo [-v] [-C DIR] <command> [arguments] [flags] [-- passthrough]
 | `godoo up` | build what is missing, then start postgres, mailpit, odoo, nginx |
 | `godoo down [--all]` | stop all services; data is kept (`--all`: of every project on this machine) |
 | `godoo status` | state, pid, port and log file of each service |
+| `godoo service install [--system] \| remove \| status` | run the project under systemd: starts at boot, restarts on failure, works without godoo ([details](#running-as-a-service-systemd)) |
 | `godoo restart [SERVICE]` | restart one service: `odoo` (default), `postgres`, `nginx`, `mailpit` |
 | `godoo logs [SERVICE\|all] [-f] [-n 100]` | show a log (default `odoo`); `-f` follows it |
 | `godoo run [-- ODOO_ARGS]` | Odoo in the foreground instead of the background, for `breakpoint()` and pdb |
@@ -753,7 +812,8 @@ shop/
     ├── conf/           # odoo.conf, nginx.conf (regenerated on every start)
     ├── data/           # postgres cluster, odoo filestore, mailpit.db
     ├── logs/           # one log per service
-    └── run/            # pid files, nginx temp dirs
+    ├── run/            # pid files, nginx temp dirs
+    └── systemd/        # unit files from `godoo service install`
 ```
 
 The generated `.gitignore` excludes `.godoo/`, `odoo/`, `repos/`,
@@ -837,7 +897,9 @@ internal/nix/           flake rendering, nix build/eval, python package lookup
 internal/pypi/          pure-python wheels from PyPI for what nixpkgs lacks
 internal/odoo/          odoo + repo clones (sparse.go: only selected modules), addons_path, odoo.conf, odoo-bin argv, dependency checks
 internal/selection/     addons.yaml (doodba format): which modules of which repos
-internal/services/      postgres.go, mailpit.go, odoo.go, nginx.go + manager.go
+internal/services/      postgres.go, mailpit.go, odoo.go, nginx.go + manager.go;
+                        systemd.go hands start/stop to systemctl once units are installed
+internal/systemd/       unit files (units.go) and systemctl (systemctl.go)
 internal/proc/          start/stop/wait for background processes
 internal/registry/      the list of projects on this machine
 internal/templates/     *.tmpl for flake.nix, odoo.conf, nginx.conf, godoo.yaml

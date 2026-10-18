@@ -22,6 +22,7 @@ import (
 // 127.0.0.1 (no unix socket, so long project paths are never a problem).
 type Postgres struct{ p *project.Project }
 
+func (s *Postgres) proj() *project.Project      { return s.p }
 func (s *Postgres) Name() string                { return "postgres" }
 func (s *Postgres) Enabled() bool               { return true }
 func (s *Postgres) Port() int                   { return s.p.Cfg.Ports.Postgres }

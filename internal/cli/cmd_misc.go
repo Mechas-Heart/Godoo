@@ -159,6 +159,9 @@ func cmdDestroy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if mode, ok := services.Managed(p); ok {
+		return fmt.Errorf("systemd (%s units) runs this project; run `godoo service remove` first", mode)
+	}
 	if !*yes && !confirm(fmt.Sprintf("Delete %s (all databases, filestore, logs)?", p.StateDir())) {
 		return errors.New("aborted")
 	}

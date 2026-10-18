@@ -12,6 +12,7 @@ import (
 	"github.com/Mechas-Heart/Godoo/internal/config"
 	"github.com/Mechas-Heart/Godoo/internal/proc"
 	"github.com/Mechas-Heart/Godoo/internal/project"
+	"github.com/Mechas-Heart/Godoo/internal/systemd"
 	"github.com/Mechas-Heart/Godoo/internal/ui"
 )
 
@@ -47,8 +48,25 @@ func Up(ctx context.Context, p *project.Project, skip ...string) error {
 }
 
 // Start prepares and starts one service, then waits until its port answers.
+// Under systemd (see systemd.go) systemctl starts it.
 func Start(ctx context.Context, s Service) error {
 	spec := s.Spec()
+	if mode, ok := Managed(s.proj()); ok {
+		if state, pid := systemd.State(ctx, mode, unit(s)); state == "active" {
+			ui.Info("%-8s already running (systemd, pid %d)", s.Name(), pid)
+			return nil
+		}
+		if err := startUnit(ctx, mode, s); err != nil {
+			return err
+		}
+		if err := proc.WaitPort(s.Port(), nil, s.ReadyTimeout()); err != nil {
+			return fmt.Errorf("%s did not start: %w\n--- last lines of %s ---\n%s",
+				s.Name(), err, spec.LogFile, proc.Tail(spec.LogFile, 20))
+		}
+		_, pid := systemd.State(ctx, mode, unit(s))
+		ui.Info("%-8s started (systemd, pid %d, port %d)", s.Name(), pid, s.Port())
+		return nil
+	}
 	if pid, ok := proc.Running(spec.PidFile); ok {
 		ui.Info("%-8s already running (pid %d)", s.Name(), pid)
 		return nil
@@ -73,12 +91,26 @@ func Start(ctx context.Context, s Service) error {
 
 // IsRunning reports whether the service's process is alive.
 func IsRunning(s Service) bool {
+	if mode, ok := Managed(s.proj()); ok {
+		state, _ := systemd.State(context.Background(), mode, unit(s))
+		return state == "active"
+	}
 	_, ok := proc.Running(s.Spec().PidFile)
 	return ok
 }
 
 // Stop stops one service; it is a no-op when the service is not running.
 func Stop(s Service) error {
+	if mode, ok := Managed(s.proj()); ok {
+		if !IsRunning(s) {
+			return nil
+		}
+		if _, err := systemd.Systemctl(context.Background(), mode, "stop", unit(s)); err != nil {
+			return fmt.Errorf("%w\n(try: %s stop %s)", err, systemd.Command(mode), unit(s))
+		}
+		ui.Info("%-8s stopped (systemd)", s.Name())
+		return nil
+	}
 	spec := s.Spec()
 	if _, ok := proc.Running(spec.PidFile); !ok {
 		return nil
@@ -112,9 +144,15 @@ type State struct {
 
 func Status(p *project.Project) []State {
 	var out []State
+	mode, managed := Managed(p)
 	for _, s := range All(p) {
 		spec := s.Spec()
 		pid, running := proc.Running(spec.PidFile)
+		if managed {
+			var state string
+			state, pid = systemd.State(context.Background(), mode, unit(s))
+			running = state == "active"
+		}
 		out = append(out, State{s.Name(), s.Enabled(), pid, running, s.Port(), spec.LogFile})
 	}
 	return out

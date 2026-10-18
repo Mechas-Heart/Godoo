@@ -25,6 +25,8 @@ type Service interface {
 	Port() int
 	// ReadyTimeout is how long to wait for Port.
 	ReadyTimeout() time.Duration
+
+	proj() *project.Project
 }
 
 // All returns the services in start order.

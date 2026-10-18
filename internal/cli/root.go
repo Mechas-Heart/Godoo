@@ -36,6 +36,7 @@ func commands() []command {
 		{"down", "[--all]", "stop all services (--all: of every project)", cmdDown},
 		{"restart", "[service]", "restart one service (default: odoo)", cmdRestart},
 		{"status", "", "show services, pids and ports", cmdStatus},
+		{"service", "install [--system] | remove | status", "run the project under systemd: starts at boot, without godoo", cmdService},
 		{"logs", "[service|all] [-f] [-n 100]", "show service logs (default: odoo)", cmdLogs},
 		{"run", "[--debugpy [--wait]] [-- odoo args]", "run odoo in the foreground (pdb, breakpoint(), debugpy)", cmdRun},
 		{"odoo", "-- ARGS", "run odoo-bin with the project config", cmdOdoo},
