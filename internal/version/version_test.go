@@ -23,3 +23,21 @@ func TestIsRelease(t *testing.T) {
 		t.Error("Normalize")
 	}
 }
+
+func TestCompatible(t *testing.T) {
+	for _, c := range []struct {
+		running, pinned string
+		want            bool
+	}{
+		{"v0.8.0", "v0.8.0", true},
+		{"v0.8.3", "v0.8.0", true},  // bug fixes on top
+		{"v0.8.0", "v0.8.2", false}, // misses fixes the project has
+		{"v0.9.0", "v0.8.2", false}, // new minor: generated files may differ
+		{"v0.7.9", "v0.8.0", false},
+		{"v1.8.0", "v0.8.0", false},
+	} {
+		if got := Compatible(c.running, c.pinned); got != c.want {
+			t.Errorf("Compatible(%s, %s) = %v, want %v", c.running, c.pinned, got, c.want)
+		}
+	}
+}

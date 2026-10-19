@@ -17,20 +17,23 @@ import (
 )
 
 // A project records the godoo release it is made with (godoo_version in
-// godoo.yaml). Another godoo could write slightly different config files
+// godoo.yaml). A godoo of another v0.X could write different config files
 // than the ones you tested, so it warns, and a prod `service install`
-// refuses. Development builds have no release to compare and skip the check.
+// refuses. Newer bug-fix releases of the same v0.X are accepted.
+// Development builds have no release to compare and skip the check.
 
 // installHint is how to install a given godoo release.
 func installHint(v string) string {
 	return "curl -fsSL https://raw.githubusercontent.com/Mechas-Heart/Godoo/main/install.sh | GODOO_VERSION=" + v + " sh"
 }
 
-// pinMismatch returns the pinned and running versions when they differ.
+// pinMismatch returns the pinned and running versions when this godoo is
+// not compatible with the pin (see version.Compatible: a newer bug-fix
+// release of the same v0.X is fine).
 func pinMismatch(p *project.Project) (pinned, running string, mismatch bool) {
 	running, release := version.Release()
 	pinned = version.Normalize(p.Cfg.GodooVersion)
-	return pinned, running, release && pinned != "" && pinned != running
+	return pinned, running, release && pinned != "" && !version.Compatible(running, pinned)
 }
 
 // warnPin prints a warning when another godoo than the pinned one runs.

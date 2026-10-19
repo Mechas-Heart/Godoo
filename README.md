@@ -342,9 +342,11 @@ could write them slightly differently than what you tested. So
 godoo_version: v0.7.1
 ```
 
-- Any other godoo release warns when it runs the project, and says how to
-  install the pinned one.
-- In `env: prod`, `godoo service install` refuses to run with another version.
+- A newer **bug-fix** release of the same `v0.X` (v0.8.0 -> v0.8.3) is
+  accepted silently: bug-fix releases never change generated files.
+- Another `v0.X` (v0.9.0 on a v0.8.x project), or an older release, warns when
+  it runs the project and says how to install the pinned one.
+- In `env: prod`, `godoo service install` refuses to run with such a version.
 - To move to a new godoo: install it on your machine, check the project,
   run `godoo pin` (records the version you run), commit `godoo.yaml`, then
   install that version on the server.
@@ -1039,11 +1041,21 @@ nix develop   # a shell with Go, make and gopls, if Go is not installed
 static binaries and attaches them to a GitHub release. `install.sh` always
 fetches from there.
 
-To release, first set the new version in `flake.nix` (`version = "0.3.0";`),
+**Version numbers.** Projects pin the godoo version they are made with (see
+[Deploying to a server](#deploying-to-a-server)), so the numbers carry a
+promise:
+
+- `v0.8.0 -> v0.8.1`: **bug fixes only.** Nothing godoo generates changes
+  (`flake.nix`, `odoo.conf`, `nginx.conf`, units). Pinned projects accept it
+  without a warning.
+- `v0.8.x -> v0.9.0`: **new features**, or anything that changes generated
+  files. Pinned projects warn until someone tests them and runs `godoo pin`.
+
+To release, first set the new version in `flake.nix` (`version = "0.8.0";`),
 commit, then tag that commit:
 
 ```
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.8.0 && git push origin v0.8.0
 ```
 
 The release workflow stops if the tag and `flake.nix` disagree.

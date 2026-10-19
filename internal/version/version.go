@@ -9,6 +9,8 @@ package version
 import (
 	"regexp"
 	"runtime/debug"
+	"strconv"
+	"strings"
 )
 
 var (
@@ -55,4 +57,37 @@ func Normalize(v string) string {
 		return "v" + v
 	}
 	return v
+}
+
+// Compatible reports whether release running can work on a project made with
+// release pinned. godoo's version numbers mean:
+//
+//	v0.8.1 -> v0.8.2   bug fixes only: generated files stay the same
+//	v0.8.x -> v0.9.0   new features, or generated files may change
+//
+// So the same major.minor with an equal or newer patch is compatible; an
+// older patch may lack a fix the project relies on.
+func Compatible(running, pinned string) bool {
+	r, okR := parts(running)
+	p, okP := parts(pinned)
+	if !okR || !okP {
+		return running == pinned
+	}
+	return r[0] == p[0] && r[1] == p[1] && r[2] >= p[2]
+}
+
+// parts splits "v0.8.1" into [0 8 1].
+func parts(v string) ([3]int, bool) {
+	var out [3]int
+	if !IsRelease(v) {
+		return out, false
+	}
+	for i, f := range strings.Split(strings.TrimPrefix(v, "v"), ".") {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
