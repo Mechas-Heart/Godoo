@@ -5,6 +5,10 @@
 name: {{.Name}}
 env: {{.Env}}                      # local (mailpit, dev mode, dev tools) | prod
                                  # GODOO_ENV=prod overrides this, e.g. on a server
+{{- if .GodooVersion}}
+godoo_version: {{.GodooVersion}}           # the godoo this project is made with; install the same on a server
+                                 # (`godoo pin` moves it to the godoo you run)
+{{- end}}
 
 odoo:
   version: "{{.Version}}"

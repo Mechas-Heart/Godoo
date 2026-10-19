@@ -6,7 +6,10 @@
 // back to what Go records in the binary itself.
 package version
 
-import "runtime/debug"
+import (
+	"regexp"
+	"runtime/debug"
+)
 
 var (
 	Version = "dev"
@@ -32,4 +35,24 @@ func init() {
 			Date = s.Value
 		}
 	}
+}
+
+var releaseRe = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// Release returns the version when this binary is an exact release
+// (v0.7.1), and false for development builds (dev, v0.7.1-3-gabc-dirty,
+// v0.7.1+dirty), which have no version to compare a project's pin with.
+func Release() (string, bool) {
+	return Version, IsRelease(Version)
+}
+
+// IsRelease reports whether v is a release version like v0.7.1.
+func IsRelease(v string) bool { return releaseRe.MatchString(v) }
+
+// Normalize adds the "v" a version like "0.7.1" lacks.
+func Normalize(v string) string {
+	if v != "" && v[0] != 'v' {
+		return "v" + v
+	}
+	return v
 }

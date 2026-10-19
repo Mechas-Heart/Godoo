@@ -57,6 +57,7 @@ func commands() []command {
 		{"nix-update", "", "update flake.lock to the latest pinned nixpkgs and rebuild", cmdNixUpdate},
 		{"doctor", "[--versions]", "check nix, odoo's python requirements and ports", cmdDoctor},
 		{"destroy", "[--yes]", "stop services and delete .godoo (data, logs)", cmdDestroy},
+		{"pin", "[VERSION]", "record the godoo version this project is made with (default: this one)", cmdPin},
 		{"version", "", "print the godoo version", cmdVersion},
 	}
 }
@@ -86,9 +87,12 @@ func Main(args []string) int {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1
 		}
-		if acct != nil {
-			if p, err := openProject(); err == nil {
+		if p, err := openProject(); err == nil {
+			if acct != nil {
 				prepareAsOwner(p, acct)
+			}
+			if c.name != "pin" && c.name != "init" {
+				warnPin(p)
 			}
 		}
 		if err := c.run(ctx, args[1:]); err != nil {

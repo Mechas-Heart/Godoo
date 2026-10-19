@@ -19,6 +19,7 @@ import (
 	"github.com/Mechas-Heart/Godoo/internal/registry"
 	"github.com/Mechas-Heart/Godoo/internal/templates"
 	"github.com/Mechas-Heart/Godoo/internal/ui"
+	build "github.com/Mechas-Heart/Godoo/internal/version"
 	"github.com/Mechas-Heart/Godoo/internal/versions"
 )
 
@@ -41,6 +42,7 @@ type initData struct {
 	Postgres                   string
 	Nixpkgs, PythonNixpkgs     string
 	OdooPackage                string
+	GodooVersion               string // "" for development builds
 	Ports                      config.Ports
 }
 
@@ -95,6 +97,9 @@ func cmdInit(ctx context.Context, args []string) error {
 	}
 	if *env == config.EnvProd {
 		data.AdminPasswd, data.PGPassword = randomSecret(), randomSecret()
+	}
+	if v, ok := build.Release(); ok {
+		data.GodooVersion = v
 	}
 
 	ui.Step("creating project %s (Odoo %s, %s) in %s", data.Name, data.Version, data.Env, dir)

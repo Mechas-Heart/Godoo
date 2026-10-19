@@ -18,6 +18,7 @@ import (
 	"github.com/Mechas-Heart/Godoo/internal/registry"
 	"github.com/Mechas-Heart/Godoo/internal/services"
 	"github.com/Mechas-Heart/Godoo/internal/ui"
+	"github.com/Mechas-Heart/Godoo/internal/version"
 )
 
 func cmdUp(ctx context.Context, args []string) error {
@@ -116,6 +117,9 @@ func cmdStatus(ctx context.Context, args []string) error {
 	fmt.Printf("%s - Odoo %s %s - env %s (from %s) - %s\n", c.Name, c.Odoo.Version, c.Odoo.Edition, c.Env, c.EnvSource, p.Root)
 	if mode, ok := services.Managed(p); ok {
 		fmt.Printf("run by systemd (%s units, `godoo service status`)\n", mode)
+	}
+	if c.GodooVersion != "" {
+		fmt.Printf("godoo %s (pinned %s)\n", version.Version, version.Normalize(c.GodooVersion))
 	}
 	fmt.Println()
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)

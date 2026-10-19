@@ -27,16 +27,19 @@ const (
 )
 
 type Config struct {
-	Name     string         `yaml:"name"`
-	Env      string         `yaml:"env"`
-	Odoo     OdooConfig     `yaml:"odoo"`
-	Ports    Ports          `yaml:"ports"`
-	Postgres PostgresConfig `yaml:"postgres"`
-	Nginx    NginxConfig    `yaml:"nginx"`
-	Mailpit  MailpitConfig  `yaml:"mailpit"`
-	SMTP     SMTPConfig     `yaml:"smtp"`
-	Nix      NixConfig      `yaml:"nix"`
-	Repos    []Repo         `yaml:"repos"`
+	Name string `yaml:"name"`
+	Env  string `yaml:"env"`
+	// GodooVersion is the godoo release the project is made with (`godoo
+	// pin`); another version warns, and refuses to install prod services.
+	GodooVersion string         `yaml:"godoo_version"`
+	Odoo         OdooConfig     `yaml:"odoo"`
+	Ports        Ports          `yaml:"ports"`
+	Postgres     PostgresConfig `yaml:"postgres"`
+	Nginx        NginxConfig    `yaml:"nginx"`
+	Mailpit      MailpitConfig  `yaml:"mailpit"`
+	SMTP         SMTPConfig     `yaml:"smtp"`
+	Nix          NixConfig      `yaml:"nix"`
+	Repos        []Repo         `yaml:"repos"`
 
 	// EnvSource says where Env came from: godoo.yaml or GODOO_ENV.
 	EnvSource string `yaml:"-"`

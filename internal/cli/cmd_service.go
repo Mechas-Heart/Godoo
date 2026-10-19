@@ -66,6 +66,9 @@ func serviceInstall(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refusePinMismatch(p); err != nil {
+		return err
+	}
 
 	mode := systemd.User
 	switch {

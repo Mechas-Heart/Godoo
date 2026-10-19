@@ -34,6 +34,7 @@ its services: **PostgreSQL, Odoo, nginx and (locally) mailpit**.
 - [Quick start](#quick-start)
 - [The services](#the-services)
 - [Running as a service (systemd)](#running-as-a-service-systemd)
+- [Deploying to a server](#deploying-to-a-server)
 - [Local vs prod](#local-vs-prod)
 - [Selecting modules: addons.yaml](#selecting-modules-addonsyaml)
 - [Community or Enterprise](#community-or-enterprise)
@@ -300,6 +301,56 @@ guard (which commands root may run) was tested in a user namespace.
 **Not tested yet:** installing system units (as root or with the printed
 sudo commands), creating the `odoo` account and the `chown`. Test those on a
 throwaway machine first.
+
+## Deploying to a server
+
+The server runs the project from git with the **same godoo version** you
+used, under systemd:
+
+```
+# 1. godoo itself: the version the project is pinned to (godoo_version in godoo.yaml)
+curl -fsSL https://raw.githubusercontent.com/Mechas-Heart/Godoo/main/install.sh \
+  | sudo GODOO_VERSION=v0.7.1 GODOO_INSTALL_DIR=/usr/local/bin sh
+
+# 2. the project
+sudo git clone https://github.com/you/shop.git /opt/shop && cd /opt/shop
+
+# 3. build, configure and start it under systemd (env: prod in godoo.yaml)
+sudo godoo service install        # /opt/shop belongs to root, so the services run as a new `odoo` account
+```
+
+Step 3 builds the Nix environment, clones Odoo and the addon repos, writes
+the configs, creates the database cluster and installs the systemd units
+(see [Running as a service](#running-as-a-service-systemd)). From then on the
+services run without godoo, through reboots and crashes.
+
+**Updates** are a pull and a restart:
+
+```
+cd /opt/shop && sudo -u odoo git pull   # as the account that owns the project now
+sudo -u odoo godoo setup          # new packages or addon repos, if godoo.yaml changed
+sudo godoo restart                # odoo picks up the new code and config
+sudo -u odoo godoo update sale    # modules whose data or views changed
+```
+
+**Why the version is pinned.** godoo writes the files the server runs
+(`odoo.conf`, `nginx.conf`, `flake.nix`, the units). Another godoo version
+could write them slightly differently than what you tested. So
+`godoo init` records its version in `godoo.yaml`:
+
+```yaml
+godoo_version: v0.7.1
+```
+
+- Any other godoo release warns when it runs the project, and says how to
+  install the pinned one.
+- In `env: prod`, `godoo service install` refuses to run with another version.
+- To move to a new godoo: install it on your machine, check the project,
+  run `godoo pin` (records the version you run), commit `godoo.yaml`, then
+  install that version on the server.
+- `godoo pin v0.7.1` sets a version explicitly. Projects made before
+  `godoo_version` existed have no pin and no check until you run `godoo pin`.
+- Development builds (from a clone, not a release) skip the check.
 
 ## Local vs prod
 
@@ -712,6 +763,7 @@ godoo [-v] [-C DIR] <command> [arguments] [flags] [-- passthrough]
 | `godoo config` | the fully resolved `godoo.yaml` (defaults filled in) and where `env` came from |
 | `godoo doctor [--versions]` | check nix, Odoo's requirements vs the Nix Python, addon dependencies, ports |
 | `godoo destroy [--yes]` | stop everything and delete `.godoo/` (**all databases and filestore**); keeps your code |
+| `godoo pin [VERSION]` | record the godoo version the project is made with (default: the one running); [details](#deploying-to-a-server) |
 | `godoo version` | godoo's version |
 
 ### Services
